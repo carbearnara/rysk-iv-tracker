@@ -131,7 +131,9 @@ DASHBOARD_HTML = '''
             ivData.forEach(d => { const k = `${d.strike}-${d.expiry}`; if (!groups[k]) groups[k] = []; groups[k].push(d); });
             const datasets = Object.entries(groups).slice(0,5).map(([k, pts], i) => ({
                 label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.mid_iv})),
-                borderColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i], backgroundColor: 'transparent', tension: 0.3
+                borderColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
+                backgroundColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
+                tension: 0, pointRadius: 5, pointHoverRadius: 7, showLine: true, stepped: false
             }));
             if (ivChart) ivChart.destroy();
             ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
