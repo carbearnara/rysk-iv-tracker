@@ -411,7 +411,10 @@ def calculate_iv_from_apy(spot, strike, expiry, apy, is_put):
     sigma = 0.5  # Initial guess
     converged = False
 
-    for _ in range(50):
+    # Use relative tolerance for small premiums
+    tol = max(0.0000001, premium * 0.001)  # 0.1% of premium or 1e-7
+
+    for _ in range(100):
         try:
             d1 = (math.log(spot / strike) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
             d2 = d1 - sigma * math.sqrt(T)
@@ -427,13 +430,13 @@ def calculate_iv_from_apy(spot, strike, expiry, apy, is_put):
 
             diff = price - premium
 
-            if abs(diff) < 0.0001:
+            if abs(diff) < tol:
                 converged = True
                 break
 
-            # Vega
+            # Vega (use relative threshold too)
             vega = spot * math.sqrt(T) * math.exp(-d1 ** 2 / 2) / math.sqrt(2 * math.pi)
-            if vega < 0.0001:
+            if vega < tol * 0.01:
                 break
 
             sigma = sigma - diff / vega
