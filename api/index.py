@@ -409,34 +409,42 @@ def calculate_iv_from_apy(spot, strike, expiry, apy, is_put):
 
     # Newton-Raphson to find IV
     sigma = 0.5  # Initial guess
+    converged = False
 
     for _ in range(50):
-        d1 = (math.log(spot / strike) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
-        d2 = d1 - sigma * math.sqrt(T)
+        try:
+            d1 = (math.log(spot / strike) + (r + 0.5 * sigma ** 2) * T) / (sigma * math.sqrt(T))
+            d2 = d1 - sigma * math.sqrt(T)
 
-        # Standard normal CDF approximation
-        def norm_cdf(x):
-            return 0.5 * (1 + math.erf(x / math.sqrt(2)))
+            # Standard normal CDF approximation
+            def norm_cdf(x):
+                return 0.5 * (1 + math.erf(x / math.sqrt(2)))
 
-        if is_put:
-            price = strike * math.exp(-r * T) * norm_cdf(-d2) - spot * norm_cdf(-d1)
-        else:
-            price = spot * norm_cdf(d1) - strike * math.exp(-r * T) * norm_cdf(d2)
+            if is_put:
+                price = strike * math.exp(-r * T) * norm_cdf(-d2) - spot * norm_cdf(-d1)
+            else:
+                price = spot * norm_cdf(d1) - strike * math.exp(-r * T) * norm_cdf(d2)
 
-        diff = price - premium
+            diff = price - premium
 
-        if abs(diff) < 0.0001:
-            return sigma * 100
+            if abs(diff) < 0.0001:
+                converged = True
+                break
 
-        # Vega
-        vega = spot * math.sqrt(T) * math.exp(-d1 ** 2 / 2) / math.sqrt(2 * math.pi)
-        if vega < 0.0001:
+            # Vega
+            vega = spot * math.sqrt(T) * math.exp(-d1 ** 2 / 2) / math.sqrt(2 * math.pi)
+            if vega < 0.0001:
+                break
+
+            sigma = sigma - diff / vega
+            sigma = max(0.01, min(5.0, sigma))
+        except (ValueError, ZeroDivisionError):
             break
 
-        sigma = sigma - diff / vega
-        sigma = max(0.01, min(5.0, sigma))
-
-    return sigma * 100 if 0.01 < sigma < 5.0 else None
+    # Only return IV if converged and within reasonable bounds
+    if converged and 0.05 < sigma < 4.0:
+        return sigma * 100
+    return None
 
 
 def save_records(records):
