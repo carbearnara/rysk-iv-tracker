@@ -54,6 +54,10 @@ DASHBOARD_HTML = '''
         th { color: #8b949e; font-weight: 500; text-transform: uppercase; font-size: 11px; }
         tr:hover { background: #21262d; }
         .iv-value { font-family: monospace; }
+        .pricing-expensive { color: #f85149; font-weight: bold; }
+        .pricing-cheap { color: #3fb950; font-weight: bold; }
+        .pricing-fair { color: #8b949e; }
+        .pricing-na { color: #484f58; }
         .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #8b949e; }
         .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
         .stat { background: #21262d; padding: 15px; border-radius: 6px; text-align: center; }
@@ -148,7 +152,9 @@ DASHBOARD_HTML = '''
         }
         function updateTable(data) {
             if (!data.length) { document.getElementById('table-container').innerHTML = '<div class="loading">No data</div>'; return; }
-            document.getElementById('table-container').innerHTML = `<table><thead><tr><th>Asset</th><th>Strike</th><th>Expiry</th><th>Type</th><th>IV</th><th>APY</th></tr></thead><tbody>${data.map(d => `<tr><td>${d.asset}</td><td>${d.strike}</td><td>${d.expiry}</td><td>${d.option_type||'-'}</td><td class="iv-value">${d.mid_iv?d.mid_iv.toFixed(2)+'%':'-'}</td><td>${d.apy?d.apy.toFixed(2)+'%':'-'}</td></tr>`).join('')}</tbody></table>`;
+            const pricingClass = p => p === 'EXPENSIVE' ? 'pricing-expensive' : p === 'CHEAP' ? 'pricing-cheap' : 'pricing-fair';
+            const pricingLabel = d => d.pricing ? `<span class="${pricingClass(d.pricing)}">${d.pricing}</span>${d.iv_percentile !== null ? ` <small>(${d.iv_percentile.toFixed(0)}%ile)</small>` : ''}` : '<span class="pricing-na">-</span>';
+            document.getElementById('table-container').innerHTML = `<table><thead><tr><th>Asset</th><th>Strike</th><th>Expiry</th><th>Type</th><th>IV</th><th>APY</th><th>Pricing</th></tr></thead><tbody>${data.map(d => `<tr><td>${d.asset}</td><td>${d.strike}</td><td>${d.expiry}</td><td>${d.option_type||'-'}</td><td class="iv-value">${d.mid_iv?d.mid_iv.toFixed(2)+'%':'-'}</td><td>${d.apy?d.apy.toFixed(2)+'%':'-'}</td><td>${pricingLabel(d)}</td></tr>`).join('')}</tbody></table>`;
         }
         init();
     </script>
@@ -211,11 +217,13 @@ def api_assets():
 
 @app.route('/api/latest')
 def api_latest():
-    """Get latest IV values."""
+    """Get latest IV values with pricing indicator."""
     asset = request.args.get('asset')
     try:
         conn = get_db()
         cursor = conn.cursor()
+
+        # Get latest values
         query = """
             SELECT DISTINCT ON (asset, strike, expiry) *
             FROM iv_snapshots
@@ -228,8 +236,59 @@ def api_latest():
         query += " ORDER BY asset, strike, expiry, timestamp DESC"
         cursor.execute(query, params)
         rows = cursor.fetchall()
+
+        # Get historical IV for percentile calculation (last 7 days)
+        since = datetime.utcnow() - timedelta(days=7)
+        cursor.execute("""
+            SELECT asset, strike, expiry, mid_iv
+            FROM iv_snapshots
+            WHERE mid_iv IS NOT NULL AND timestamp > %s
+        """, (since,))
+        history = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+
+        # Build historical IV lookup: {(asset, strike, expiry): [iv1, iv2, ...]}
+        iv_history = {}
+        for h in history:
+            key = (h['asset'], h['strike'], h['expiry'])
+            if key not in iv_history:
+                iv_history[key] = []
+            iv_history[key].append(h['mid_iv'])
+
+        # Add percentile and pricing indicator to each row
+        results = []
+        for r in rows:
+            row = dict(r)
+            key = (r['asset'], r['strike'], r['expiry'])
+            hist = iv_history.get(key, [])
+
+            if r['mid_iv'] and len(hist) >= 3:
+                # Calculate percentile
+                sorted_hist = sorted(hist)
+                current_iv = r['mid_iv']
+                below = sum(1 for iv in sorted_hist if iv < current_iv)
+                percentile = (below / len(sorted_hist)) * 100
+
+                row['iv_percentile'] = round(percentile, 1)
+                row['iv_min'] = round(min(hist), 2)
+                row['iv_max'] = round(max(hist), 2)
+
+                # Pricing indicator
+                if percentile >= 75:
+                    row['pricing'] = 'EXPENSIVE'
+                elif percentile <= 25:
+                    row['pricing'] = 'CHEAP'
+                else:
+                    row['pricing'] = 'FAIR'
+            else:
+                row['iv_percentile'] = None
+                row['pricing'] = None
+                row['iv_min'] = None
+                row['iv_max'] = None
+
+            results.append(row)
+
+        return jsonify(results)
     except Exception as e:
         return jsonify([])
 
