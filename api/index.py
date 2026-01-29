@@ -58,6 +58,14 @@ DASHBOARD_HTML = '''
         .pricing-cheap { color: #3fb950; font-weight: bold; }
         .pricing-fair { color: #8b949e; }
         .pricing-na { color: #484f58; }
+        .aggregate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+        .asset-card { background: #21262d; border-radius: 8px; padding: 15px; text-align: center; }
+        .asset-card .asset-name { font-size: 18px; font-weight: bold; color: #c9d1d9; margin-bottom: 8px; }
+        .asset-card .asset-pricing { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
+        .asset-card .asset-pricing.expensive { background: rgba(248,81,73,0.2); color: #f85149; }
+        .asset-card .asset-pricing.cheap { background: rgba(63,185,80,0.2); color: #3fb950; }
+        .asset-card .asset-pricing.fair { background: rgba(139,148,158,0.2); color: #8b949e; }
+        .asset-card .asset-pct { font-size: 11px; color: #8b949e; margin-top: 6px; }
         .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #8b949e; }
         .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
         .stat { background: #21262d; padding: 15px; border-radius: 6px; text-align: center; }
@@ -95,6 +103,10 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>Market Pricing Overview</h2>
+            <div id="aggregate-pricing" class="aggregate-grid"><div class="loading">Loading...</div></div>
+        </div>
         <div class="grid">
             <div class="card"><h2>IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
             <div class="card"><h2>IV by Strike</h2><div class="chart-container"><canvas id="strike-chart"></canvas></div></div>
@@ -109,7 +121,27 @@ DASHBOARD_HTML = '''
             sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
             sel.onchange = refresh;
             document.getElementById('days-select').onchange = refresh;
+            await updateAggregatePricing();
             refresh();
+        }
+        async function updateAggregatePricing() {
+            const allData = await (await fetch('/api/latest')).json();
+            const byAsset = {};
+            allData.forEach(d => {
+                if (!byAsset[d.asset]) byAsset[d.asset] = [];
+                if (d.iv_percentile !== null) byAsset[d.asset].push(d.iv_percentile);
+            });
+            const container = document.getElementById('aggregate-pricing');
+            const cards = Object.entries(byAsset).map(([asset, pcts]) => {
+                if (pcts.length === 0) return `<div class="asset-card"><div class="asset-name">${asset}</div><div class="asset-pricing fair">NO DATA</div></div>`;
+                const avgPct = pcts.reduce((a,b) => a+b, 0) / pcts.length;
+                let pricing, pricingClass;
+                if (avgPct >= 75) { pricing = 'EXPENSIVE'; pricingClass = 'expensive'; }
+                else if (avgPct <= 25) { pricing = 'CHEAP'; pricingClass = 'cheap'; }
+                else { pricing = 'FAIR'; pricingClass = 'fair'; }
+                return `<div class="asset-card"><div class="asset-name">${asset}</div><div class="asset-pricing ${pricingClass}">${pricing}</div><div class="asset-pct">Avg ${avgPct.toFixed(0)}th percentile</div></div>`;
+            });
+            container.innerHTML = cards.join('');
         }
         async function refresh() {
             const asset = document.getElementById('asset-select').value;
@@ -117,7 +149,8 @@ DASHBOARD_HTML = '''
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
-                (await fetch('/api/assets')).json()
+                (await fetch('/api/assets')).json(),
+                updateAggregatePricing()
             ]);
             document.getElementById('stat-assets').textContent = assets.length;
             document.getElementById('stat-records').textContent = ivData.length;
