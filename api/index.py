@@ -61,8 +61,9 @@ DASHBOARD_HTML = '''
         .pricing-fair { color: #8b949e; }
         .pricing-na { color: #484f58; }
         .aggregate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-        .asset-card { background: #21262d; border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; transition: background 0.2s, transform 0.1s; }
+        .asset-card { background: #21262d; border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; transition: background 0.2s, transform 0.1s, border 0.2s; border: 2px solid transparent; }
         .asset-card:hover { background: #30363d; transform: translateY(-2px); }
+        .asset-card.selected { border-color: #58a6ff; background: #1a2332; }
         .asset-card .asset-name { font-size: 18px; font-weight: bold; color: #c9d1d9; margin-bottom: 8px; }
         .asset-card .asset-pricing { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
         .asset-card .asset-pricing.expensive { background: rgba(248,81,73,0.2); color: #f85149; }
@@ -126,15 +127,15 @@ DASHBOARD_HTML = '''
                 </div>
             </div>
         </header>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>Market Pricing Overview</h2>
+            <div id="aggregate-pricing" class="aggregate-grid"><div class="loading">Loading...</div></div>
+        </div>
         <div class="stats">
             <div class="stat"><div class="stat-value" id="stat-assets">-</div><div class="stat-label">Assets</div></div>
             <div class="stat"><div class="stat-value" id="stat-records">-</div><div class="stat-label">Records</div></div>
             <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
-        </div>
-        <div class="card" style="margin-bottom: 20px;">
-            <h2>Market Pricing Overview</h2>
-            <div id="aggregate-pricing" class="aggregate-grid"><div class="loading">Loading...</div></div>
         </div>
         <div class="grid">
             <div class="card"><h2 id="iv-chart-title">IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
@@ -196,6 +197,9 @@ DASHBOARD_HTML = '''
             const days = document.getElementById('days-select').value;
             document.getElementById('iv-chart-title').textContent = `${asset} IV Over Time`;
             document.getElementById('strike-chart-title').textContent = `${asset} IV by Strike`;
+            document.querySelectorAll('.asset-card').forEach(card => {
+                card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
+            });
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
