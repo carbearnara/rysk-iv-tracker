@@ -119,7 +119,11 @@ DASHBOARD_HTML = '''
 <body>
     <div class="container">
         <header>
-            <div class="title-section"><h1>Rysk IV Tracker</h1><p class="subtitle">You gotta Rysk it IV the Biscuit</p></div>
+            <div class="title-section">
+                <h1>Rysk IV Tracker</h1>
+                <p class="subtitle">You gotta Rysk it IV the Biscuit</p>
+                <button class="btn-secondary" style="margin-top: 10px;" onclick="openModal()">Methodology</button>
+            </div>
             <div class="controls">
                 <div class="control-group">
                     <label>Show data from previous</label>
@@ -128,10 +132,6 @@ DASHBOARD_HTML = '''
                         <option value="7" selected>7 days</option>
                         <option value="30">30 days</option>
                     </select>
-                </div>
-                <div class="control-group">
-                    <label>&nbsp;</label>
-                    <button class="btn-secondary" onclick="openModal()">Methodology</button>
                 </div>
             </div>
             <select id="asset-select" style="display:none;"><option>Loading...</option></select>
@@ -152,9 +152,9 @@ DASHBOARD_HTML = '''
         <div class="card">
             <div class="collapsible-header" onclick="toggleTable()">
                 <h2>Full IV Values</h2>
-                <button class="collapse-toggle" id="table-toggle">&#9660;</button>
+                <button class="collapse-toggle collapsed" id="table-toggle">&#9660;</button>
             </div>
-            <div class="collapsible-content" id="table-collapsible">
+            <div class="collapsible-content collapsed" id="table-collapsible">
                 <div id="table-container"><div class="loading">Loading...</div></div>
             </div>
         </div>
