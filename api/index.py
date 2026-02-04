@@ -71,11 +71,27 @@ DASHBOARD_HTML = '''
         .asset-card .asset-pricing.fair { background: rgba(139,148,158,0.2); color: #8b949e; }
         .asset-card .asset-pct { font-size: 11px; color: #8b949e; margin-top: 6px; }
         .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #8b949e; }
-        .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
         .stat { background: #21262d; padding: 15px; border-radius: 6px; text-align: center; }
         .stat-value { font-size: 24px; font-weight: bold; color: #58a6ff; }
         .stat-label { font-size: 12px; color: #8b949e; margin-top: 5px; }
-        @media (max-width: 600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+        @media (max-width: 600px) {
+            .stats { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+            .stat { padding: 10px; }
+            .stat-value { font-size: 18px; }
+            header { flex-direction: column; align-items: flex-start; }
+            .title-section { width: 100%; }
+            .controls { width: 100%; justify-content: space-between; }
+            .card { padding: 15px; }
+            .card h2 { font-size: 14px; }
+            .aggregate-grid { grid-template-columns: repeat(2, 1fr); gap: 8px; }
+            .asset-card { padding: 10px; }
+            .asset-card .asset-name { font-size: 14px; }
+            .asset-card .asset-pricing { font-size: 12px; }
+            body { padding: 10px; }
+            table { font-size: 11px; }
+            th, td { padding: 6px 4px; }
+        }
         .btn-secondary { background: #21262d; border: 1px solid #30363d; }
         .btn-secondary:hover { background: #30363d; }
         .collapsible-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
@@ -125,7 +141,6 @@ DASHBOARD_HTML = '''
             <div id="aggregate-pricing" class="aggregate-grid"><div class="loading">Loading...</div></div>
         </div>
         <div class="stats">
-            <div class="stat"><div class="stat-value" id="stat-assets">-</div><div class="stat-label">Assets</div></div>
             <div class="stat"><div class="stat-value" id="stat-records">-</div><div class="stat-label">Records</div></div>
             <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
@@ -212,8 +227,7 @@ DASHBOARD_HTML = '''
                 (await fetch('/api/assets')).json(),
                 updateAggregatePricing()
             ]);
-            document.getElementById('stat-assets').textContent = assets.length;
-            document.getElementById('stat-records').textContent = ivData.length;
+                        document.getElementById('stat-records').textContent = ivData.length;
             if (ivData.length > 0) {
                 const avgIV = ivData.reduce((s,d) => s + (d.mid_iv||0), 0) / ivData.length;
                 document.getElementById('stat-avg-iv').textContent = avgIV.toFixed(1) + '%';
