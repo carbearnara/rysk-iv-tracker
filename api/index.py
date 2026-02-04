@@ -61,7 +61,8 @@ DASHBOARD_HTML = '''
         .pricing-fair { color: #8b949e; }
         .pricing-na { color: #484f58; }
         .aggregate-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
-        .asset-card { background: #21262d; border-radius: 8px; padding: 15px; text-align: center; }
+        .asset-card { background: #21262d; border-radius: 8px; padding: 15px; text-align: center; cursor: pointer; transition: background 0.2s, transform 0.1s; }
+        .asset-card:hover { background: #30363d; transform: translateY(-2px); }
         .asset-card .asset-name { font-size: 18px; font-weight: bold; color: #c9d1d9; margin-bottom: 8px; }
         .asset-card .asset-pricing { font-size: 14px; font-weight: bold; padding: 4px 8px; border-radius: 4px; }
         .asset-card .asset-pricing.expensive { background: rgba(248,81,73,0.2); color: #f85149; }
@@ -158,6 +159,10 @@ DASHBOARD_HTML = '''
             content.classList.toggle('collapsed');
             toggle.classList.toggle('collapsed');
         }
+        function selectAsset(asset) {
+            document.getElementById('asset-select').value = asset;
+            refresh();
+        }
         async function init() {
             const assets = await (await fetch('/api/assets')).json();
             const sel = document.getElementById('asset-select');
@@ -176,13 +181,13 @@ DASHBOARD_HTML = '''
             });
             const container = document.getElementById('aggregate-pricing');
             const cards = Object.entries(byAsset).map(([asset, pcts]) => {
-                if (pcts.length === 0) return `<div class="asset-card"><div class="asset-name">${asset}</div><div class="asset-pricing fair">NO DATA</div></div>`;
+                if (pcts.length === 0) return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing fair">NO DATA</div></div>`;
                 const avgPct = pcts.reduce((a,b) => a+b, 0) / pcts.length;
                 let pricing, pricingClass;
                 if (avgPct >= 75) { pricing = 'EXPENSIVE'; pricingClass = 'expensive'; }
                 else if (avgPct <= 25) { pricing = 'CHEAP'; pricingClass = 'cheap'; }
                 else { pricing = 'FAIR'; pricingClass = 'fair'; }
-                return `<div class="asset-card"><div class="asset-name">${asset}</div><div class="asset-pricing ${pricingClass}">${pricing}</div><div class="asset-pct">Avg ${avgPct.toFixed(0)}th percentile</div></div>`;
+                return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing ${pricingClass}">${pricing}</div><div class="asset-pct">Avg ${avgPct.toFixed(0)}th percentile</div></div>`;
             });
             container.innerHTML = cards.join('');
         }
