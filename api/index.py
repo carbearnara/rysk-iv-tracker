@@ -220,16 +220,16 @@ DASHBOARD_HTML = '''
             const days = document.getElementById('days-select').value;
             document.getElementById('iv-chart-title').textContent = `${asset} IV Over Time`;
             document.getElementById('strike-chart-title').textContent = `${asset} IV by Strike`;
-            document.querySelectorAll('.asset-card').forEach(card => {
-                card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
-            });
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
                 (await fetch('/api/assets')).json(),
                 updateAggregatePricing()
             ]);
-                        document.getElementById('stat-records').textContent = ivData.length;
+            document.querySelectorAll('.asset-card').forEach(card => {
+                card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
+            });
+            document.getElementById('stat-records').textContent = ivData.length;
             if (ivData.length > 0) {
                 const avgIV = ivData.reduce((s,d) => s + (d.mid_iv||0), 0) / ivData.length;
                 document.getElementById('stat-avg-iv').textContent = avgIV.toFixed(1) + '%';
