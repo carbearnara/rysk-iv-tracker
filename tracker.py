@@ -134,6 +134,8 @@ def fetch_all_asset_pages(wait_time: int = 8) -> str:
         "/earn/999/USOL/USOL/USDT0/put/",      # SOL
         "/earn/999/UPUMP/UPUMP/USDT0/call/",   # PUMP
         "/earn/999/PURR/PURR/USDT0/call/",     # PURR
+        "/earn/999/fXRP/fXRP/USDT0/call/",     # XRP
+        "/earn/999/bZEC/bZEC/USDT0/call/",     # ZEC
     ]
 
     all_html = ""
@@ -593,6 +595,8 @@ def normalize_asset(asset: Optional[str]) -> Optional[str]:
         'WETH': 'ETH',
         'USOL': 'SOL',
         'WSOL': 'SOL',
+        'FXRP': 'XRP',
+        'BZEC': 'ZEC',
     }
 
     return mappings.get(asset, asset)
