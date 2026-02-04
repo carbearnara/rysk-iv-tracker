@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rysk IV Tracker</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍪</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <style>
@@ -286,13 +287,13 @@
 
         <div class="grid">
             <div class="card">
-                <h2>Implied Volatility Over Time</h2>
+                <h2 id="iv-chart-title">Implied Volatility Over Time</h2>
                 <div class="chart-container">
                     <canvas id="iv-chart"></canvas>
                 </div>
             </div>
             <div class="card">
-                <h2>IV Distribution by Strike</h2>
+                <h2 id="strike-chart-title">IV Distribution by Strike</h2>
                 <div class="chart-container">
                     <canvas id="strike-chart"></canvas>
                 </div>
@@ -396,6 +397,10 @@
             const days = document.getElementById('days-select').value;
 
             if (!asset) return;
+
+            // Update chart titles with asset name
+            document.getElementById('iv-chart-title').textContent = `${asset} Implied Volatility Over Time`;
+            document.getElementById('strike-chart-title').textContent = `${asset} IV Distribution by Strike`;
 
             // Fetch data
             const ivData = await fetchIVData(asset, days, strike, expiry);
