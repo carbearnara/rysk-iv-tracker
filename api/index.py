@@ -246,7 +246,7 @@ DASHBOARD_HTML = '''
             <p>All options are currently tracked against <code>USDT</code> as the quote asset.</p>
 
             <h3>Update Frequency</h3>
-            <p>Data is fetched via a daily cron job. Manual refreshes pull the latest stored data from the database.</p>
+            <p>Data is fetched every 15 minutes. Manual refreshes pull the latest stored data from the database.</p>
         </div>
     </div>
 </body>
