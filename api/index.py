@@ -154,6 +154,18 @@ DASHBOARD_HTML = '''
     </div>
     <script>
         let ivChart = null, strikeChart = null;
+        const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
+        let spotPrices = {};
+        async function fetchSpotPrices() {
+            try {
+                const ids = Object.values(coinGeckoIds).join(',');
+                const resp = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${ids}&vs_currencies=usd`);
+                const data = await resp.json();
+                for (const [symbol, geckoId] of Object.entries(coinGeckoIds)) {
+                    if (data[geckoId]) spotPrices[symbol] = data[geckoId].usd;
+                }
+            } catch (e) { console.log('Failed to fetch spot prices:', e); }
+        }
         function toggleTable() {
             const content = document.getElementById('table-collapsible');
             const toggle = document.getElementById('table-toggle');
@@ -165,6 +177,7 @@ DASHBOARD_HTML = '''
             refresh();
         }
         async function init() {
+            await fetchSpotPrices();
             const assets = await (await fetch('/api/assets')).json();
             const sel = document.getElementById('asset-select');
             sel.innerHTML = assets.map(a => `<option value="${a}">${a}</option>`).join('');
@@ -213,10 +226,10 @@ DASHBOARD_HTML = '''
                 document.getElementById('stat-avg-iv').textContent = avgIV.toFixed(1) + '%';
                 document.getElementById('stat-updated').textContent = new Date(ivData[ivData.length-1].timestamp).toLocaleTimeString();
             }
-            updateCharts(ivData, latestData);
+            updateCharts(ivData, latestData, asset);
             updateTable(latestData);
         }
-        function updateCharts(ivData, latestData) {
+        function updateCharts(ivData, latestData, asset) {
             const ctx1 = document.getElementById('iv-chart').getContext('2d');
             const groups = {};
             ivData.forEach(d => { const k = `${d.strike}-${d.expiry}`; if (!groups[k]) groups[k] = []; groups[k].push(d); });
@@ -234,8 +247,16 @@ DASHBOARD_HTML = '''
             latestData.forEach(d => { if (!strikeData[d.strike]) strikeData[d.strike] = []; strikeData[d.strike].push(d.mid_iv); });
             const strikes = Object.keys(strikeData).sort((a,b) => a-b);
             const avgMid = strikes.map(s => strikeData[s].reduce((a,b)=>a+b,0)/strikeData[s].length);
+            const spotPrice = spotPrices[asset];
+            let closestIdx = -1;
+            if (spotPrice) {
+                let minDiff = Infinity;
+                strikes.forEach((s, i) => { const diff = Math.abs(parseFloat(s) - spotPrice); if (diff < minDiff) { minDiff = diff; closestIdx = i; } });
+            }
+            const barColors = strikes.map((_, i) => i === closestIdx ? '#f0883e' : '#58a6ff');
+            const labels = strikes.map((s, i) => i === closestIdx ? `${s} (spot)` : s);
             if (strikeChart) strikeChart.destroy();
-            strikeChart = new Chart(ctx2, { type: 'bar', data: { labels: strikes, datasets: [{ label: 'IV %', data: avgMid, backgroundColor: '#58a6ff' }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { display: false } } } });
+            strikeChart = new Chart(ctx2, { type: 'bar', data: { labels: labels, datasets: [{ label: 'IV %', data: avgMid, backgroundColor: barColors }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { display: false } } } });
         }
         function updateTable(data) {
             if (!data.length) { document.getElementById('table-container').innerHTML = '<div class="loading">No data</div>'; return; }
