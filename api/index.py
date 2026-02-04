@@ -38,7 +38,8 @@ DASHBOARD_HTML = '''
         body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; padding: 20px; }
         .container { max-width: 1400px; margin: 0 auto; }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; flex-wrap: wrap; gap: 15px; }
-        h1 { font-size: 24px; color: #58a6ff; }
+        h1 { font-size: 24px; color: #58a6ff; margin-bottom: 4px; }
+        .subtitle { font-size: 14px; color: #8b949e; font-style: italic; }
         .controls { display: flex; gap: 15px; flex-wrap: wrap; }
         .control-group { display: flex; flex-direction: column; gap: 5px; }
         label { font-size: 12px; color: #8b949e; text-transform: uppercase; }
@@ -78,7 +79,7 @@ DASHBOARD_HTML = '''
 <body>
     <div class="container">
         <header>
-            <h1>Rysk IV Tracker</h1>
+            <div class="title-section"><h1>Rysk IV Tracker</h1><p class="subtitle">You gotta Rysk it IV the Biscuit</p></div>
             <div class="controls">
                 <div class="control-group">
                     <label>Asset</label>
