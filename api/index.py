@@ -119,10 +119,12 @@ DASHBOARD_HTML = '''
 <body>
     <div class="container">
         <header>
-            <div class="title-section">
-                <h1>Rysk IV Tracker</h1>
-                <p class="subtitle">You gotta Rysk it IV the Biscuit</p>
-                <button class="btn-secondary" style="margin-top: 10px;" onclick="openModal()">Methodology</button>
+            <div class="title-section" style="display: flex; align-items: center; gap: 15px;">
+                <div>
+                    <h1>Rysk IV Tracker</h1>
+                    <p class="subtitle">You gotta Rysk it IV the Biscuit</p>
+                </div>
+                <button class="btn-secondary" onclick="openModal()">Methodology</button>
             </div>
             <div class="controls">
                 <div class="control-group">
