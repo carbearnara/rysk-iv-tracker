@@ -106,11 +106,7 @@ DASHBOARD_HTML = '''
             <div class="title-section"><h1>Rysk IV Tracker</h1><p class="subtitle">You gotta Rysk it IV the Biscuit</p></div>
             <div class="controls">
                 <div class="control-group">
-                    <label>Asset</label>
-                    <select id="asset-select"><option>Loading...</option></select>
-                </div>
-                <div class="control-group">
-                    <label>Days</label>
+                    <label>Show data from previous</label>
                     <select id="days-select">
                         <option value="1">1 day</option>
                         <option value="7" selected>7 days</option>
@@ -119,13 +115,10 @@ DASHBOARD_HTML = '''
                 </div>
                 <div class="control-group">
                     <label>&nbsp;</label>
-                    <button onclick="refresh()">Refresh</button>
-                </div>
-                <div class="control-group">
-                    <label>&nbsp;</label>
                     <button class="btn-secondary" onclick="openModal()">Methodology</button>
                 </div>
             </div>
+            <select id="asset-select" style="display:none;"><option>Loading...</option></select>
         </header>
         <div class="card" style="margin-bottom: 20px;">
             <h2>Market Pricing Overview</h2>
@@ -240,7 +233,7 @@ DASHBOARD_HTML = '''
                 tension: 0, pointRadius: 5, pointHoverRadius: 7, showLine: true, stepped: false
             }));
             if (ivChart) ivChart.destroy();
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: 'IV %', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
