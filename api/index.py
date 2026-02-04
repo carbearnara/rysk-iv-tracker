@@ -74,6 +74,18 @@ DASHBOARD_HTML = '''
         .stat-value { font-size: 24px; font-weight: bold; color: #58a6ff; }
         .stat-label { font-size: 12px; color: #8b949e; margin-top: 5px; }
         @media (max-width: 600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
+        .btn-secondary { background: #21262d; border: 1px solid #30363d; }
+        .btn-secondary:hover { background: #30363d; }
+        .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
+        .modal-overlay.active { display: flex; }
+        .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 24px; }
+        .modal h2 { color: #58a6ff; margin-bottom: 16px; font-size: 20px; }
+        .modal h3 { color: #c9d1d9; margin: 16px 0 8px 0; font-size: 16px; }
+        .modal p { color: #8b949e; line-height: 1.6; margin-bottom: 12px; font-size: 14px; }
+        .modal ul { color: #8b949e; margin-left: 20px; margin-bottom: 12px; font-size: 14px; line-height: 1.6; }
+        .modal code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #f0883e; }
+        .modal-close { float: right; background: none; border: none; color: #8b949e; font-size: 24px; cursor: pointer; padding: 0; line-height: 1; }
+        .modal-close:hover { color: #c9d1d9; background: none; }
     </style>
 </head>
 <body>
@@ -96,6 +108,10 @@ DASHBOARD_HTML = '''
                 <div class="control-group">
                     <label>&nbsp;</label>
                     <button onclick="refresh()">Refresh</button>
+                </div>
+                <div class="control-group">
+                    <label>&nbsp;</label>
+                    <button class="btn-secondary" onclick="openModal()">Methodology</button>
                 </div>
             </div>
         </header>
@@ -193,8 +209,46 @@ DASHBOARD_HTML = '''
             const pricingLabel = d => d.pricing ? `<span class="${pricingClass(d.pricing)}">${d.pricing}</span>${d.iv_percentile !== null ? ` <small>(${d.iv_percentile.toFixed(0)}%ile)</small>` : ''}` : '<span class="pricing-na">-</span>';
             document.getElementById('table-container').innerHTML = `<table><thead><tr><th>Asset</th><th>Strike</th><th>Expiry</th><th>Type</th><th>IV</th><th>APY</th><th>Pricing</th></tr></thead><tbody>${data.map(d => `<tr><td>${d.asset}</td><td>${d.strike}</td><td>${d.expiry}</td><td>${d.option_type||'-'}</td><td class="iv-value">${d.mid_iv?d.mid_iv.toFixed(2)+'%':'-'}</td><td>${d.apy?d.apy.toFixed(2)+'%':'-'}</td><td>${pricingLabel(d)}</td></tr>`).join('')}</tbody></table>`;
         }
+        function openModal() { document.getElementById('methodology-modal').classList.add('active'); }
+        function closeModal() { document.getElementById('methodology-modal').classList.remove('active'); }
+        document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
         init();
     </script>
+    <div id="methodology-modal" class="modal-overlay" onclick="if(event.target===this)closeModal()">
+        <div class="modal">
+            <button class="modal-close" onclick="closeModal()">&times;</button>
+            <h2>Methodology</h2>
+            <p>The Rysk IV Tracker monitors implied volatility (IV) data from <a href="https://app.rysk.finance" target="_blank" style="color:#58a6ff">Rysk Finance</a> options markets on Hyperliquid.</p>
+
+            <h3>Data Collection</h3>
+            <p>The tracker scrapes option data from Rysk Finance pages, extracting:</p>
+            <ul>
+                <li><strong>Bid/Ask IV</strong> - Implied volatility from market quotes</li>
+                <li><strong>APY</strong> - Annual percentage yield for options</li>
+                <li><strong>Strike & Expiry</strong> - Contract specifications</li>
+            </ul>
+            <p>When explicit IV values aren't available, IV is calculated from APY using the Black-Scholes model with the current spot price.</p>
+
+            <h3>IV Calculation</h3>
+            <p>Mid IV is calculated as: <code>(Bid IV + Ask IV) / 2</code></p>
+            <p>When only APY is available, we reverse-engineer IV using Black-Scholes, solving for the volatility that produces the given premium.</p>
+
+            <h3>Pricing Indicator</h3>
+            <p>Each option is labeled based on where current IV sits relative to its 7-day history:</p>
+            <ul>
+                <li><strong style="color:#f85149">EXPENSIVE</strong> - IV is in the top 33% (above 67th percentile)</li>
+                <li><strong style="color:#3fb950">CHEAP</strong> - IV is in the bottom 33% (below 33rd percentile)</li>
+                <li><strong style="color:#8b949e">FAIR</strong> - IV is in the middle range</li>
+            </ul>
+            <p>Requires at least 3 data points in the lookback period.</p>
+
+            <h3>Quote Asset</h3>
+            <p>All options are currently tracked against <code>USDT</code> as the quote asset.</p>
+
+            <h3>Update Frequency</h3>
+            <p>Data is fetched via a daily cron job. Manual refreshes pull the latest stored data from the database.</p>
+        </div>
+    </div>
 </body>
 </html>
 '''
