@@ -30,6 +30,7 @@ DASHBOARD_HTML = '''
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Rysk IV Tracker</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍪</text></svg>">
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
     <style>
@@ -108,8 +109,8 @@ DASHBOARD_HTML = '''
             <div id="aggregate-pricing" class="aggregate-grid"><div class="loading">Loading...</div></div>
         </div>
         <div class="grid">
-            <div class="card"><h2>IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
-            <div class="card"><h2>IV by Strike</h2><div class="chart-container"><canvas id="strike-chart"></canvas></div></div>
+            <div class="card"><h2 id="iv-chart-title">IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
+            <div class="card"><h2 id="strike-chart-title">IV by Strike</h2><div class="chart-container"><canvas id="strike-chart"></canvas></div></div>
         </div>
         <div class="card"><h2>Latest IV Values</h2><div id="table-container"><div class="loading">Loading...</div></div></div>
     </div>
@@ -146,6 +147,8 @@ DASHBOARD_HTML = '''
         async function refresh() {
             const asset = document.getElementById('asset-select').value;
             const days = document.getElementById('days-select').value;
+            document.getElementById('iv-chart-title').textContent = `${asset} IV Over Time`;
+            document.getElementById('strike-chart-title').textContent = `${asset} IV by Strike`;
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
