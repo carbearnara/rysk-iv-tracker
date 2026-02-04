@@ -76,6 +76,16 @@ DASHBOARD_HTML = '''
         @media (max-width: 600px) { .stats { grid-template-columns: repeat(2, 1fr); } }
         .btn-secondary { background: #21262d; border: 1px solid #30363d; }
         .btn-secondary:hover { background: #30363d; }
+        .collapsible-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
+        .collapsible-header h2 { margin-bottom: 0; }
+        .collapse-toggle { background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; transition: transform 0.2s; }
+        .collapse-toggle:hover { color: #c9d1d9; background: none; }
+        .collapse-toggle.collapsed { transform: rotate(-90deg); }
+        .collapsible-content { overflow: hidden; transition: max-height 0.3s ease-out; }
+        .collapsible-content.collapsed { max-height: 0 !important; }
+        footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #30363d; text-align: center; color: #8b949e; font-size: 13px; }
+        footer a { color: #58a6ff; text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
         .modal-overlay.active { display: flex; }
         .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 24px; }
@@ -129,10 +139,25 @@ DASHBOARD_HTML = '''
             <div class="card"><h2 id="iv-chart-title">IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
             <div class="card"><h2 id="strike-chart-title">IV by Strike</h2><div class="chart-container"><canvas id="strike-chart"></canvas></div></div>
         </div>
-        <div class="card"><h2>Latest IV Values</h2><div id="table-container"><div class="loading">Loading...</div></div></div>
+        <div class="card">
+            <div class="collapsible-header" onclick="toggleTable()">
+                <h2>Full IV Values</h2>
+                <button class="collapse-toggle" id="table-toggle">&#9660;</button>
+            </div>
+            <div class="collapsible-content" id="table-collapsible">
+                <div id="table-container"><div class="loading">Loading...</div></div>
+            </div>
+        </div>
+        <footer>Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.</footer>
     </div>
     <script>
         let ivChart = null, strikeChart = null;
+        function toggleTable() {
+            const content = document.getElementById('table-collapsible');
+            const toggle = document.getElementById('table-toggle');
+            content.classList.toggle('collapsed');
+            toggle.classList.toggle('collapsed');
+        }
         async function init() {
             const assets = await (await fetch('/api/assets')).json();
             const sel = document.getElementById('asset-select');
