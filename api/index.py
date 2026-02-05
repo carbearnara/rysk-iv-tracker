@@ -289,19 +289,20 @@ DASHBOARD_HTML = '''
             // Sort by max value, take top 5
             const sorted = Object.entries(groups).map(([k, pts]) => ({ k, pts, maxVal: Math.max(...pts.map(p => p.displayValue)) })).sort((a, b) => b.maxVal - a.maxVal);
             const top5 = sorted.slice(0, 5);
-            const others = sorted.slice(5);
+            const othersCount = sorted.length - 5;
             const colors = ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'];
-            const otherColors = ['#6e7681','#484f58','#8b949e','#6e7681','#484f58'];
-            const datasets = [];
-            top5.forEach(({k, pts}, i) => {
-                datasets.push({ label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})), borderColor: colors[i], backgroundColor: colors[i], borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.1, hidden: false, isOther: false });
-            });
-            others.forEach(({k, pts}, i) => {
-                datasets.push({ label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})), borderColor: otherColors[i % otherColors.length], backgroundColor: otherColors[i % otherColors.length], borderWidth: 1, pointRadius: 0, pointHoverRadius: 3, tension: 0.1, hidden: true, isOther: true });
-            });
+            const datasets = top5.map(({k, pts}, i) => ({
+                label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})),
+                borderColor: colors[i], backgroundColor: colors[i],
+                borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.1
+            }));
+            // Add "other markets" as a single combined indicator if there are more
+            if (othersCount > 0) {
+                const otherData = sorted.slice(5).flatMap(({pts}) => pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})));
+                datasets.push({ label: `Other markets (${othersCount})`, data: otherData, borderColor: '#6e7681', backgroundColor: '#6e7681', borderWidth: 1, pointRadius: 0, pointHoverRadius: 2, tension: 0.1, hidden: true });
+            }
             if (ivChart) ivChart.destroy();
-            let showingOthers = false;
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25, filter: (item, data) => !data.datasets[item.datasetIndex].isOther, generateLabels: (chart) => { const original = Chart.defaults.plugins.legend.labels.generateLabels(chart); const visible = original.filter(l => !chart.data.datasets[l.datasetIndex].isOther); if (others.length > 0) { visible.push({ text: showingOthers ? 'Hide other markets (' + others.length + ')' : 'Show other markets (' + others.length + ')', fillStyle: '#6e7681', strokeStyle: '#6e7681', lineWidth: 2, hidden: false, datasetIndex: -1 }); } return visible; } }, onClick: (e, legendItem, legend) => { const ci = legend.chart; if (legendItem.datasetIndex === -1) { showingOthers = !showingOthers; ci.data.datasets.forEach((ds, i) => { if (ds.isOther) ci.getDatasetMeta(i).hidden = !showingOthers; }); } else { ci.getDatasetMeta(legendItem.datasetIndex).hidden = !ci.getDatasetMeta(legendItem.datasetIndex).hidden; } ci.update(); } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25 } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
