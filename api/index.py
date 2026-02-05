@@ -281,11 +281,14 @@ DASHBOARD_HTML = '''
                     groups[k].push({...d, displayValue: val});
                 }
             });
-            const datasets = Object.entries(groups).slice(0,5).map(([k, pts], i) => ({
+            // Generate colors for all datasets
+            const colors = ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e','#f9826c','#a5d6ff','#7ee787','#ff7b72','#d2a8ff','#ffa657','#79c0ff','#56d364','#ffa198','#e2c5ff'];
+            const getColor = (i) => colors[i % colors.length];
+            const datasets = Object.entries(groups).map(([k, pts], i) => ({
                 label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})),
-                borderColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
-                backgroundColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
-                tension: 0, pointRadius: 5, pointHoverRadius: 7, showLine: true, stepped: false
+                borderColor: getColor(i),
+                backgroundColor: getColor(i),
+                tension: 0, pointRadius: 3, pointHoverRadius: 5, showLine: true, stepped: false
             }));
             if (ivChart) ivChart.destroy();
             ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
