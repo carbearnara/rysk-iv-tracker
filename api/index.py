@@ -51,6 +51,7 @@ DASHBOARD_HTML = '''
         .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
         .card h2 { font-size: 16px; margin-bottom: 15px; color: #8b949e; }
         .chart-container { position: relative; height: 300px; }
+        .chart-container-large { position: relative; height: 450px; }
         table { width: 100%; border-collapse: collapse; font-size: 13px; }
         th, td { padding: 10px; text-align: left; border-bottom: 1px solid #21262d; }
         th { color: #8b949e; font-weight: 500; text-transform: uppercase; font-size: 11px; }
@@ -159,9 +160,13 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label" id="stat-avg-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
-        <div class="grid">
-            <div class="card"><h2 id="iv-chart-title">IV Over Time</h2><div class="chart-container"><canvas id="iv-chart"></canvas></div></div>
-            <div class="card"><h2 id="strike-chart-title">IV by Strike</h2><div class="chart-container"><canvas id="strike-chart"></canvas></div></div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2 id="iv-chart-title">IV Over Time</h2>
+            <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
+        </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2 id="strike-chart-title">IV by Strike</h2>
+            <div class="chart-container"><canvas id="strike-chart"></canvas></div>
         </div>
         <div class="card">
             <div class="collapsible-header" onclick="toggleTable()">
@@ -288,10 +293,10 @@ DASHBOARD_HTML = '''
                 label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})),
                 borderColor: getColor(i),
                 backgroundColor: getColor(i),
-                tension: 0, pointRadius: 3, pointHoverRadius: 5, showLine: true, stepped: false
+                borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, showLine: true, tension: 0.1
             }));
             if (ivChart) ivChart.destroy();
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e', usePointStyle: true }, onClick: (e, legendItem, legend) => { const index = legendItem.datasetIndex; const ci = legend.chart; ci.getDatasetMeta(index).hidden = !ci.getDatasetMeta(index).hidden; ci.update(); } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
