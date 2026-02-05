@@ -286,19 +286,19 @@ DASHBOARD_HTML = '''
                     groups[k].push({...d, displayValue: val});
                 }
             });
-            // Sort by max value, take top 5
-            const sorted = Object.entries(groups).map(([k, pts]) => ({ k, pts, maxVal: Math.max(...pts.map(p => p.displayValue)) })).sort((a, b) => b.maxVal - a.maxVal);
-            const top5 = sorted.slice(0, 5);
-            const othersCount = sorted.length - 5;
-            const colors = ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'];
-            const datasets = top5.map(({k, pts}, i) => ({
+            // Sort by max value, take top 10, then sort by strike for legend
+            const sorted = Object.entries(groups).map(([k, pts]) => ({ k, pts, maxVal: Math.max(...pts.map(p => p.displayValue)), strike: parseFloat(k.split('-')[0]) })).sort((a, b) => b.maxVal - a.maxVal);
+            const top10 = sorted.slice(0, 10).sort((a, b) => a.strike - b.strike);
+            const othersCount = sorted.length - 10;
+            const colors = ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e','#79c0ff','#56d364','#ff7b72','#d2a8ff','#ffa657'];
+            const datasets = top10.map(({k, pts}, i) => ({
                 label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})),
                 borderColor: colors[i], backgroundColor: colors[i],
                 borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.1
             }));
             // Add "other markets" as a single combined indicator if there are more
             if (othersCount > 0) {
-                const otherData = sorted.slice(5).flatMap(({pts}) => pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})));
+                const otherData = sorted.slice(10).flatMap(({pts}) => pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})));
                 datasets.push({ label: `Other markets (${othersCount})`, data: otherData, borderColor: '#6e7681', backgroundColor: '#6e7681', borderWidth: 1, pointRadius: 0, pointHoverRadius: 2, tension: 0.1, hidden: true });
             }
             if (ivChart) ivChart.destroy();
