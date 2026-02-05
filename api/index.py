@@ -214,6 +214,11 @@ DASHBOARD_HTML = '''
             document.getElementById('days-select').onchange = refresh;
             await updateAggregatePricing();
             refresh();
+            // Auto-refresh every 5 minutes
+            setInterval(() => {
+                refresh();
+                fetchSpotPrices();
+            }, 5 * 60 * 1000);
         }
         async function updateAggregatePricing() {
             const allData = await (await fetch('/api/latest')).json();
