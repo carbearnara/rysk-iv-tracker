@@ -94,6 +94,11 @@ DASHBOARD_HTML = '''
         }
         .btn-secondary { background: #21262d; border: 1px solid #30363d; }
         .btn-secondary:hover { background: #30363d; }
+        .toggle-container { display: flex; border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+        .toggle-btn { padding: 8px 16px; border: none; background: #161b22; color: #8b949e; font-size: 14px; cursor: pointer; transition: all 0.2s; }
+        .toggle-btn:hover { background: #21262d; color: #c9d1d9; }
+        .toggle-btn.active { background: #238636; color: white; }
+        .toggle-btn:first-child { border-right: 1px solid #30363d; }
         .collapsible-header { display: flex; justify-content: space-between; align-items: center; cursor: pointer; }
         .collapsible-header h2 { margin-bottom: 0; }
         .collapse-toggle { background: none; border: none; color: #8b949e; font-size: 20px; cursor: pointer; transition: transform 0.2s; }
@@ -128,6 +133,13 @@ DASHBOARD_HTML = '''
             </div>
             <div class="controls">
                 <div class="control-group">
+                    <label>Display Mode</label>
+                    <div class="toggle-container">
+                        <button id="mode-iv" class="toggle-btn active" onclick="setDisplayMode('iv')">IV</button>
+                        <button id="mode-apr" class="toggle-btn" onclick="setDisplayMode('apr')">APR</button>
+                    </div>
+                </div>
+                <div class="control-group">
                     <label>Show data from previous</label>
                     <select id="days-select">
                         <option value="1">1 day</option>
@@ -144,7 +156,7 @@ DASHBOARD_HTML = '''
         </div>
         <div class="stats">
             <div class="stat"><div class="stat-value" id="stat-records">-</div><div class="stat-label">Records</div></div>
-            <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label">Avg IV</div></div>
+            <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label" id="stat-avg-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
         <div class="grid">
@@ -164,8 +176,15 @@ DASHBOARD_HTML = '''
     </div>
     <script>
         let ivChart = null, strikeChart = null;
+        let displayMode = 'iv'; // 'iv' or 'apr'
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
         let spotPrices = {};
+        function setDisplayMode(mode) {
+            displayMode = mode;
+            document.getElementById('mode-iv').classList.toggle('active', mode === 'iv');
+            document.getElementById('mode-apr').classList.toggle('active', mode === 'apr');
+            refresh();
+        }
         async function fetchSpotPrices() {
             try {
                 const ids = Object.values(coinGeckoIds).join(',');
@@ -218,8 +237,9 @@ DASHBOARD_HTML = '''
         async function refresh() {
             const asset = document.getElementById('asset-select').value;
             const days = document.getElementById('days-select').value;
-            document.getElementById('iv-chart-title').textContent = `${asset} IV Over Time`;
-            document.getElementById('strike-chart-title').textContent = `${asset} IV by Strike`;
+            const modeLabel = displayMode === 'apr' ? 'APR' : 'IV';
+            document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
+            document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
@@ -230,32 +250,52 @@ DASHBOARD_HTML = '''
                 card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
             });
             document.getElementById('stat-records').textContent = ivData.length;
+            document.getElementById('stat-avg-label').textContent = displayMode === 'apr' ? 'Avg APR' : 'Avg IV';
             if (ivData.length > 0) {
-                const avgIV = ivData.reduce((s,d) => s + (d.mid_iv||0), 0) / ivData.length;
-                document.getElementById('stat-avg-iv').textContent = avgIV.toFixed(1) + '%';
+                const valueKey = displayMode === 'apr' ? 'apy' : 'mid_iv';
+                const validData = ivData.filter(d => d[valueKey] != null);
+                const avgValue = validData.length > 0 ? validData.reduce((s,d) => s + d[valueKey], 0) / validData.length : 0;
+                document.getElementById('stat-avg-iv').textContent = avgValue.toFixed(1) + '%';
                 document.getElementById('stat-updated').textContent = new Date(ivData[ivData.length-1].timestamp).toLocaleTimeString();
             }
             updateCharts(ivData, latestData, asset);
             updateTable(latestData);
         }
         function updateCharts(ivData, latestData, asset) {
+            const useApr = displayMode === 'apr';
+            const yAxisLabel = useApr ? 'APR %' : 'IV %';
+            const valueKey = useApr ? 'apy' : 'mid_iv';
+
             const ctx1 = document.getElementById('iv-chart').getContext('2d');
             const groups = {};
-            ivData.forEach(d => { const k = `${d.strike}-${d.expiry}`; if (!groups[k]) groups[k] = []; groups[k].push(d); });
+            ivData.forEach(d => {
+                const val = useApr ? d.apy : d.mid_iv;
+                if (val != null) {
+                    const k = `${d.strike}-${d.expiry}`;
+                    if (!groups[k]) groups[k] = [];
+                    groups[k].push({...d, displayValue: val});
+                }
+            });
             const datasets = Object.entries(groups).slice(0,5).map(([k, pts], i) => ({
-                label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.mid_iv})),
+                label: k, data: pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})),
                 borderColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
                 backgroundColor: ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e'][i],
                 tension: 0, pointRadius: 5, pointHoverRadius: 7, showLine: true, stepped: false
             }));
             if (ivChart) ivChart.destroy();
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: 'IV %', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { labels: { color: '#8b949e' } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
-            latestData.forEach(d => { if (!strikeData[d.strike]) strikeData[d.strike] = []; strikeData[d.strike].push(d.mid_iv); });
+            latestData.forEach(d => {
+                const val = useApr ? d.apy : d.mid_iv;
+                if (val != null) {
+                    if (!strikeData[d.strike]) strikeData[d.strike] = [];
+                    strikeData[d.strike].push(val);
+                }
+            });
             const strikes = Object.keys(strikeData).sort((a,b) => a-b);
-            const avgMid = strikes.map(s => strikeData[s].reduce((a,b)=>a+b,0)/strikeData[s].length);
+            const avgValues = strikes.map(s => strikeData[s].reduce((a,b)=>a+b,0)/strikeData[s].length);
             const spotPrice = spotPrices[asset];
             let closestIdx = -1;
             if (spotPrice) {
@@ -265,7 +305,7 @@ DASHBOARD_HTML = '''
             const barColors = strikes.map((_, i) => i === closestIdx ? '#f0883e' : '#58a6ff');
             const labels = strikes.map((s, i) => i === closestIdx ? `${s} (spot)` : s);
             if (strikeChart) strikeChart.destroy();
-            strikeChart = new Chart(ctx2, { type: 'bar', data: { labels: labels, datasets: [{ label: 'IV %', data: avgMid, backgroundColor: barColors }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { display: false } } } });
+            strikeChart = new Chart(ctx2, { type: 'bar', data: { labels: labels, datasets: [{ label: yAxisLabel, data: avgValues, backgroundColor: barColors }] }, options: { responsive: true, maintainAspectRatio: false, scales: { x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { display: false } } } });
         }
         function updateTable(data) {
             if (!data.length) { document.getElementById('table-container').innerHTML = '<div class="loading">No data</div>'; return; }
