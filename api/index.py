@@ -560,10 +560,11 @@ def fetch_iv_data():
     records = []
     spot_prices = extract_spot_prices(html)
 
-    assets = ['BTC', 'ETH', 'SOL', 'HYPE', 'PURR', 'PUMP', 'ZEC', 'XRP']
+    # Dynamically detect all assets from HTML
+    asset_matches = re.findall(r'"([A-Z]{2,6})":\{"combinations"', html)
     asset_positions = []
 
-    for asset in assets:
+    for asset in asset_matches:
         pos = html.find(f'"{asset}":{{"combinations":')
         if pos >= 0:
             asset_positions.append((asset, pos))
@@ -627,7 +628,8 @@ def fetch_iv_data():
 def extract_spot_prices(html):
     """Extract spot prices from HTML."""
     spot_prices = {}
-    assets = ['BTC', 'ETH', 'SOL', 'HYPE', 'PURR', 'PUMP', 'ZEC', 'XRP']
+    # Dynamically detect all assets from HTML
+    assets = re.findall(r'"([A-Z]{2,6})":\{"combinations"', html)
 
     for asset in assets:
         pattern = rf'"{asset}":\{{"combinations":\{{[^}}]*?"index":([\d.]+)'
