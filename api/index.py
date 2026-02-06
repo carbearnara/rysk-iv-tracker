@@ -146,7 +146,7 @@ DASHBOARD_HTML = '''
                     <div class="toggle-container">
                         <button id="mode-iv" class="toggle-btn active" onclick="setDisplayMode('iv')">IV</button>
                         <button id="mode-apr" class="toggle-btn" onclick="setDisplayMode('apr')">APR</button>
-                        <button id="mode-svt" class="toggle-btn" onclick="setDisplayMode('svt')">Total Vol</button>
+                        <button id="mode-svt" class="toggle-btn" onclick="setDisplayMode('svt')">σ√T</button>
                     </div>
                 </div>
                 <div class="control-group">
@@ -280,7 +280,7 @@ DASHBOARD_HTML = '''
                 const asset = document.getElementById('asset-select').value;
                 if (!asset) { console.log('No asset selected'); return; }
                 const days = document.getElementById('days-select').value;
-                const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'Total Vol' : 'IV';
+                const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'σ√T' : 'IV';
                 document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
                 document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
                 const infoIcon = document.getElementById('chart-info-icon');
@@ -288,11 +288,11 @@ DASHBOARD_HTML = '''
                 if (infoIcon && infoTooltip) {
                     infoIcon.style.display = 'inline-flex';
                     if (displayMode === 'svt') {
-                        infoTooltip.innerHTML = '<strong>Total Volatility = IV × √(DTE/365)</strong><br><br>Shows premium direction over time:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
+                        infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>Shows premium direction over time:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
                     } else if (displayMode === 'apr') {
-                        infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to Total Vol mode to see premium direction';
+                        infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see premium direction';
                     } else {
-                        infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>The market expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use Total Vol mode to see premium impact';
+                        infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>The market expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
                     }
                 }
                 const [ivRes, latestRes] = await Promise.all([
@@ -305,7 +305,7 @@ DASHBOARD_HTML = '''
                 card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
             });
             document.getElementById('stat-records').textContent = ivData.length;
-            document.getElementById('stat-avg-label').textContent = displayMode === 'apr' ? 'Avg APR' : displayMode === 'svt' ? 'Avg Total Vol' : 'Avg IV';
+            document.getElementById('stat-avg-label').textContent = displayMode === 'apr' ? 'Avg APR' : displayMode === 'svt' ? 'Avg σ√T' : 'Avg IV';
             if (ivData.length > 0) {
                 let avgValue;
                 if (displayMode === 'svt') {
@@ -326,7 +326,7 @@ DASHBOARD_HTML = '''
         function updateCharts(ivData, latestData, asset) {
             const useApr = displayMode === 'apr';
             const useSvt = displayMode === 'svt';
-            const yAxisLabel = useApr ? 'APR %' : useSvt ? 'Total Volatility' : 'IV %';
+            const yAxisLabel = useApr ? 'APR %' : useSvt ? 'σ√T' : 'IV %';
 
             const ctx1 = document.getElementById('iv-chart').getContext('2d');
             const groups = {};
@@ -443,14 +443,14 @@ DASHBOARD_HTML = '''
             </ul>
             <p>Requires at least 3 data points in the lookback period.</p>
 
-            <h3>Total Volatility Mode</h3>
-            <p>This mode shows the <strong>total volatility</strong> (also known as σ√T), calculated as:</p>
-            <p><code>Total Vol = IV × √(DTE / 365)</code></p>
-            <p>This metric represents the expected standard deviation of returns until expiry and is proportional to option premium. When Total Vol is <strong>rising</strong>, the option premium is increasing despite time decay—meaning IV is rising faster than theta is eroding value.</p>
+            <h3>σ√T Mode</h3>
+            <p>This mode shows <strong>sigma root T</strong>, calculated as:</p>
+            <p><code>σ√T = IV × √(DTE / 365)</code></p>
+            <p>This metric is proportional to option premium. When σ√T is <strong>rising</strong>, the option premium is increasing despite time decay—meaning IV is rising faster than theta is eroding value.</p>
             <ul>
-                <li><strong>Total Vol rising</strong> → Premium increasing (IV outpacing time decay)</li>
-                <li><strong>Total Vol falling</strong> → Premium decreasing (time decay winning)</li>
-                <li><strong>Total Vol flat</strong> → IV and time decay are balanced</li>
+                <li><strong>σ√T rising</strong> → Premium increasing (IV outpacing time decay)</li>
+                <li><strong>σ√T falling</strong> → Premium decreasing (time decay winning)</li>
+                <li><strong>σ√T flat</strong> → IV and time decay are balanced</li>
             </ul>
 
             <h3>Quote Asset</h3>
