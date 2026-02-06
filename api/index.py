@@ -292,7 +292,7 @@ DASHBOARD_HTML = '''
                     } else if (displayMode === 'apr') {
                         infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
                     } else {
-                        infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+                        infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>The market expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
                     }
                 }
                 const [ivRes, latestRes] = await Promise.all([
