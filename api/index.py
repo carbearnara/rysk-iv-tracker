@@ -170,7 +170,7 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
-            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<div class="info-tooltip" id="chart-info-tooltip"></div></span></h2>
+            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
             <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
@@ -283,15 +283,15 @@ DASHBOARD_HTML = '''
             document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
             const infoIcon = document.getElementById('chart-info-icon');
             const infoTooltip = document.getElementById('chart-info-tooltip');
-            if (displayMode === 'svt') {
+            if (infoIcon && infoTooltip) {
                 infoIcon.style.display = 'inline-flex';
-                infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>This shows the premium direction:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
-            } else if (displayMode === 'apr') {
-                infoIcon.style.display = 'inline-flex';
-                infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
-            } else {
-                infoIcon.style.display = 'inline-flex';
-                infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+                if (displayMode === 'svt') {
+                    infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>This shows the premium direction:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
+                } else if (displayMode === 'apr') {
+                    infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
+                } else {
+                    infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+                }
             }
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
