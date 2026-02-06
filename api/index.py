@@ -70,6 +70,8 @@ DASHBOARD_HTML = '''
         .asset-card .asset-pricing.expensive { background: rgba(248,81,73,0.2); color: #f85149; }
         .asset-card .asset-pricing.cheap { background: rgba(63,185,80,0.2); color: #3fb950; }
         .asset-card .asset-pricing.fair { background: rgba(139,148,158,0.2); color: #8b949e; }
+        .asset-card .asset-pricing.inactive { background: rgba(72,79,88,0.2); color: #484f58; }
+        .asset-card.inactive { opacity: 0.6; }
         .asset-card .asset-pct { font-size: 11px; color: #8b949e; margin-top: 6px; }
         .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #8b949e; }
         .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
@@ -228,12 +230,18 @@ DASHBOARD_HTML = '''
         async function updateAggregatePricing() {
             const allData = await (await fetch('/api/latest')).json();
             const byAsset = {};
+            const now = new Date();
+            const oneDayAgo = new Date(now - 24 * 60 * 60 * 1000);
             allData.forEach(d => {
-                if (!byAsset[d.asset]) byAsset[d.asset] = [];
-                if (d.iv_percentile !== null) byAsset[d.asset].push(d.iv_percentile);
+                if (!byAsset[d.asset]) byAsset[d.asset] = { pcts: [], latestTime: null };
+                if (d.iv_percentile !== null) byAsset[d.asset].pcts.push(d.iv_percentile);
+                const ts = new Date(d.timestamp);
+                if (!byAsset[d.asset].latestTime || ts > byAsset[d.asset].latestTime) byAsset[d.asset].latestTime = ts;
             });
             const container = document.getElementById('aggregate-pricing');
-            const cards = Object.entries(byAsset).map(([asset, pcts]) => {
+            const cards = Object.entries(byAsset).map(([asset, { pcts, latestTime }]) => {
+                const isActive = latestTime && latestTime > oneDayAgo;
+                if (!isActive) return `<div class="asset-card inactive" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing inactive">NOT ACTIVE</div></div>`;
                 if (pcts.length === 0) return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing fair">NO DATA</div></div>`;
                 const avgPct = pcts.reduce((a,b) => a+b, 0) / pcts.length;
                 let pricing, pricingClass;
@@ -286,8 +294,18 @@ DASHBOARD_HTML = '''
                     groups[k].push({...d, displayValue: val});
                 }
             });
-            // Sort by max value, take top 10, then sort by strike for legend
-            const sorted = Object.entries(groups).map(([k, pts]) => ({ k, pts, maxVal: Math.max(...pts.map(p => p.displayValue)), strike: parseFloat(k.split('-')[0]) })).sort((a, b) => b.maxVal - a.maxVal);
+            // Sort by recency first (markets with recent quotes), then by max value
+            const now = new Date();
+            const sorted = Object.entries(groups).map(([k, pts]) => {
+                const latestTime = Math.max(...pts.map(p => new Date(p.timestamp).getTime()));
+                const hoursAgo = (now - latestTime) / (1000 * 60 * 60);
+                const isRecent = hoursAgo < 24;
+                return { k, pts, maxVal: Math.max(...pts.map(p => p.displayValue)), strike: parseFloat(k.split('-')[0]), latestTime, isRecent };
+            }).sort((a, b) => {
+                // Prioritize recent markets, then sort by max value
+                if (a.isRecent !== b.isRecent) return a.isRecent ? -1 : 1;
+                return b.maxVal - a.maxVal;
+            });
             const top10 = sorted.slice(0, 10).sort((a, b) => a.strike - b.strike);
             const othersCount = sorted.length - 10;
             const colors = ['#58a6ff','#3fb950','#f85149','#a371f7','#f0883e','#79c0ff','#56d364','#ff7b72','#d2a8ff','#ffa657'];
