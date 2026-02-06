@@ -183,16 +183,16 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-avg-iv">-</div><div class="stat-label" id="stat-avg-label">Avg IV</div></div>
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
+            <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
+        </div>
         <div class="signals-card">
             <div class="signals-header">
                 <h2>σ√T Trading Signals</h2>
                 <span class="info-icon">i<span class="info-tooltip">Mean reversion signals based on σ√T percentiles.<br><br>• BUY when σ√T &lt; 10th percentile<br>• SELL when σ√T &gt; 90th percentile<br>• Only shows options with 14+ DTE<br><br>Backtested: 63% win rate holding to expiry.</span></span>
             </div>
             <div id="signals-container" class="signal-grid"><div class="loading">Analyzing...</div></div>
-        </div>
-        <div class="card" style="margin-bottom: 20px;">
-            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
-            <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
             <h2 id="strike-chart-title">IV by Strike</h2>
@@ -213,6 +213,7 @@ DASHBOARD_HTML = '''
         let ivChart = null, strikeChart = null;
         let displayMode = 'iv'; // 'iv', 'apr', or 'svt'
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
+        const coveredCallOnly = ['PUMP', 'PURR', 'XRP']; // Assets with only covered calls (no puts)
         let spotPrices = {};
         function setDisplayMode(mode) {
             displayMode = mode;
@@ -288,19 +289,23 @@ DASHBOARD_HTML = '''
                     container.innerHTML = '<div class="signal-item"><span class="signal-details">No extreme signals for ' + asset + ' - σ√T values are within normal range</span></div>';
                     return;
                 }
-                container.innerHTML = signals.slice(0, 6).map(s => `
+                const isCoveredCallOnly = coveredCallOnly.includes(asset);
+                container.innerHTML = signals.slice(0, 6).map(s => {
+                    const typeLabel = s.type === 'call' ? 'Call' : s.type === 'put' ? 'Put' : 'Option';
+                    const signalLabel = s.signal === 'SELL' ? (s.type === 'call' ? 'Sell Call' : 'Sell Put') : (s.type === 'call' ? 'Buy Call' : 'Buy Put');
+                    return `
                     <div class="signal-item" style="${s.isLongDated ? 'border-left: 3px solid #3fb950;' : ''}">
                         <div class="signal-info">
                             <span class="signal-option">${asset} ${s.strike} ${s.expiry}${s.isLongDated ? ' ★' : ''}</span>
-                            <span class="signal-details">${s.type || 'option'} · ${s.dte.toFixed(0)}d DTE · IV: ${s.latestIv.toFixed(1)}%</span>
+                            <span class="signal-details">${typeLabel} · ${s.dte.toFixed(0)}d DTE · IV: ${s.latestIv.toFixed(1)}%</span>
                             <span class="signal-pct">σ√T: ${s.latestSrt.toFixed(2)} (${s.pct.toFixed(0)}th pctl)</span>
                         </div>
                         <div>
-                            <div class="signal-badge ${s.signal.toLowerCase()}">${s.signal}</div>
+                            <div class="signal-badge ${s.signal.toLowerCase()}">${signalLabel}</div>
                             <div class="signal-winrate">${s.winRate}% win rate</div>
                         </div>
                     </div>
-                `).join('');
+                `}).join('');
             } catch (e) {
                 console.error('Signal error:', e);
                 container.innerHTML = '<div class="signal-item"><span class="signal-details">Error calculating signals</span></div>';
@@ -355,14 +360,16 @@ DASHBOARD_HTML = '''
             const container = document.getElementById('aggregate-pricing');
             const cards = Object.entries(byAsset).map(([asset, { pcts, latestTime }]) => {
                 const isActive = latestTime && latestTime > oneDayAgo;
-                if (!isActive) return `<div class="asset-card inactive" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing inactive">NOT ACTIVE</div></div>`;
-                if (pcts.length === 0) return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing fair">NO DATA</div></div>`;
+                const isCCOnly = coveredCallOnly.includes(asset);
+                const ccBadge = isCCOnly ? '<span style="font-size:10px;background:#30363d;padding:2px 5px;border-radius:3px;margin-left:5px;">CC</span>' : '';
+                if (!isActive) return `<div class="asset-card inactive" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}${ccBadge}</div><div class="asset-pricing inactive">NOT ACTIVE</div></div>`;
+                if (pcts.length === 0) return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}${ccBadge}</div><div class="asset-pricing fair">NO DATA</div></div>`;
                 const avgPct = pcts.reduce((a,b) => a+b, 0) / pcts.length;
                 let pricing, pricingClass;
                 if (avgPct >= 75) { pricing = 'EXPENSIVE'; pricingClass = 'expensive'; }
                 else if (avgPct <= 25) { pricing = 'CHEAP'; pricingClass = 'cheap'; }
                 else { pricing = 'FAIR'; pricingClass = 'fair'; }
-                return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}</div><div class="asset-pricing ${pricingClass}">${pricing}</div><div class="asset-pct">Avg ${avgPct.toFixed(0)}th percentile</div></div>`;
+                return `<div class="asset-card" onclick="selectAsset('${asset}')"><div class="asset-name">${asset}${ccBadge}</div><div class="asset-pricing ${pricingClass}">${pricing}</div><div class="asset-pct">Avg ${avgPct.toFixed(0)}th percentile</div></div>`;
             });
             container.innerHTML = cards.join('');
         }
