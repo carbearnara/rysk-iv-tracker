@@ -280,6 +280,72 @@ def strategy_momentum_srt(options_data, lookback=5, hold_periods=5):
     return trades
 
 
+def strategy_mean_reversion_to_expiry(options_data, low_threshold=10, high_threshold=90):
+    """
+    Mean Reversion Strategy holding to expiry:
+    - BUY/SELL signal based on σ√T percentile
+    - Hold until the option expires (last data point)
+    - Measure total σ√T change from signal to expiry
+    """
+    trades = []
+
+    for key, points in options_data.items():
+        if len(points) < 15:
+            continue
+
+        # Find signal points in first half of data (so there's time to expiry)
+        cutoff = len(points) // 2
+
+        for i in range(5, cutoff):  # Start at 5 to have percentile history
+            point = points[i]
+            final = points[-1]  # Last point before expiry
+
+            pct = point.get('srt_percentile', 50)
+
+            # Calculate days held
+            days_held = (final['timestamp'] - point['timestamp']).total_seconds() / 86400
+
+            if pct <= low_threshold:
+                # BUY signal - expect σ√T to rise
+                srt_change = final['srt'] - point['srt']
+                srt_change_pct = (srt_change / point['srt']) * 100 if point['srt'] > 0 else 0
+                iv_change_pct = (final['iv'] - point['iv']) / point['iv'] * 100 if point['iv'] > 0 else 0
+                trades.append({
+                    'signal': 'BUY',
+                    'srt_change': srt_change,
+                    'srt_change_pct': srt_change_pct,
+                    'iv_change_pct': iv_change_pct,
+                    'success': srt_change > 0,
+                    'option': key,
+                    'entry_srt': point['srt'],
+                    'entry_pct': pct,
+                    'entry_dte': point['dte'],
+                    'days_held': days_held
+                })
+                break  # One signal per option
+
+            elif pct >= high_threshold:
+                # SELL signal - expect σ√T to fall
+                srt_change = point['srt'] - final['srt']
+                srt_change_pct = (srt_change / point['srt']) * 100 if point['srt'] > 0 else 0
+                iv_change_pct = (point['iv'] - final['iv']) / point['iv'] * 100 if point['iv'] > 0 else 0
+                trades.append({
+                    'signal': 'SELL',
+                    'srt_change': srt_change,
+                    'srt_change_pct': srt_change_pct,
+                    'iv_change_pct': iv_change_pct,
+                    'success': srt_change > 0,
+                    'option': key,
+                    'entry_srt': point['srt'],
+                    'entry_pct': pct,
+                    'entry_dte': point['dte'],
+                    'days_held': days_held
+                })
+                break  # One signal per option
+
+    return trades
+
+
 def strategy_random(options_data, hold_periods=5, num_trades=1000):
     """Random baseline strategy for comparison."""
     trades = []
@@ -418,6 +484,63 @@ def run_backtest():
                 print(f"\n{r['name']}:")
                 print(f"  BUY signals:  {r['buy_trades']:>5} trades, {r['buy_win_rate']:.1f}% win rate")
                 print(f"  SELL signals: {r['sell_trades']:>5} trades, {r['sell_win_rate']:.1f}% win rate")
+
+    # Hold to Expiry Analysis
+    print("\n" + "="*70)
+    print("HOLD TO EXPIRY ANALYSIS")
+    print("="*70)
+
+    expiry_trades = strategy_mean_reversion_to_expiry(options_data, 10, 90)
+
+    if expiry_trades:
+        expiry_result = evaluate_strategy(expiry_trades, "σ√T MR Hold to Expiry")
+
+        print(f"\nStrategy: Mean Reversion with Hold to Expiry")
+        print(f"  Threshold: 10/90 percentile")
+        print(f"  Total Trades: {expiry_result['total_trades']}")
+        print(f"  Win Rate: {expiry_result['win_rate']:.1f}%")
+        print(f"  Avg σ√T Change: {expiry_result['avg_change']:+.2f}%")
+
+        buy_trades = [t for t in expiry_trades if t['signal'] == 'BUY']
+        sell_trades = [t for t in expiry_trades if t['signal'] == 'SELL']
+
+        print(f"\n  BUY Signals (σ√T < 10th pctl):")
+        print(f"    Trades: {len(buy_trades)}")
+        if buy_trades:
+            buy_wins = sum(1 for t in buy_trades if t['success'])
+            print(f"    Win Rate: {buy_wins/len(buy_trades)*100:.1f}%")
+            print(f"    Avg Days Held: {sum(t['days_held'] for t in buy_trades)/len(buy_trades):.1f}")
+            print(f"    Avg Entry DTE: {sum(t['entry_dte'] for t in buy_trades)/len(buy_trades):.1f}")
+
+        print(f"\n  SELL Signals (σ√T > 90th pctl):")
+        print(f"    Trades: {len(sell_trades)}")
+        if sell_trades:
+            sell_wins = sum(1 for t in sell_trades if t['success'])
+            print(f"    Win Rate: {sell_wins/len(sell_trades)*100:.1f}%")
+            print(f"    Avg Days Held: {sum(t['days_held'] for t in sell_trades)/len(sell_trades):.1f}")
+            print(f"    Avg Entry DTE: {sum(t['entry_dte'] for t in sell_trades)/len(sell_trades):.1f}")
+
+        # Breakdown by DTE at entry
+        print("\n  Performance by Entry DTE:")
+        dte_buckets = {'0-3 days': [], '3-7 days': [], '7-14 days': [], '14+ days': []}
+        for t in expiry_trades:
+            dte = t['entry_dte']
+            if dte <= 3:
+                dte_buckets['0-3 days'].append(t)
+            elif dte <= 7:
+                dte_buckets['3-7 days'].append(t)
+            elif dte <= 14:
+                dte_buckets['7-14 days'].append(t)
+            else:
+                dte_buckets['14+ days'].append(t)
+
+        print(f"    {'DTE Bucket':<15} {'Trades':<10} {'Win Rate':<12} {'Avg Change':<12}")
+        print(f"    {'-'*15} {'-'*10} {'-'*12} {'-'*12}")
+        for bucket, trades in dte_buckets.items():
+            if trades:
+                wins = sum(1 for t in trades if t['success'])
+                avg_chg = sum(t['srt_change_pct'] for t in trades) / len(trades)
+                print(f"    {bucket:<15} {len(trades):<10} {wins/len(trades)*100:.1f}%{'':<6} {avg_chg:+.2f}%")
 
     # Summary
     print("\n" + "="*70)

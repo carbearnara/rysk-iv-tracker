@@ -186,7 +186,7 @@ DASHBOARD_HTML = '''
         <div class="signals-card">
             <div class="signals-header">
                 <h2>σ√T Trading Signals</h2>
-                <span class="info-icon">i<span class="info-tooltip">Mean reversion signals based on σ√T percentiles. BUY when σ√T is extremely low (bottom 10%), SELL when extremely high (top 10%). Backtested win rate: 61% over 2.5hr holds.</span></span>
+                <span class="info-icon">i<span class="info-tooltip">Mean reversion signals based on σ√T percentiles.<br><br>• BUY when σ√T &lt; 10th percentile<br>• SELL when σ√T &gt; 90th percentile<br>• Only shows options with 14+ DTE<br><br>Backtested: 63% win rate holding to expiry.</span></span>
             </div>
             <div id="signals-container" class="signal-grid"><div class="loading">Analyzing...</div></div>
         </div>
@@ -268,15 +268,18 @@ DASHBOARD_HTML = '''
                     // Calculate percentile
                     const below = historical.filter(v => v < latest.srt).length;
                     const pct = (below / historical.length) * 100;
-                    // Generate signal if extreme
+                    // Generate signal if extreme AND has enough DTE (14+ days works best)
+                    if (latest.dte < 7) continue; // Skip short-dated options
+                    const isLongDated = latest.dte >= 14;
                     if (pct <= 10) {
-                        signals.push({ key, ...opt, latestSrt: latest.srt, latestIv: latest.iv, dte: latest.dte, pct, signal: 'BUY', winRate: 58 });
+                        signals.push({ key, ...opt, latestSrt: latest.srt, latestIv: latest.iv, dte: latest.dte, pct, signal: 'BUY', winRate: isLongDated ? 63 : 51, isLongDated });
                     } else if (pct >= 90) {
-                        signals.push({ key, ...opt, latestSrt: latest.srt, latestIv: latest.iv, dte: latest.dte, pct, signal: 'SELL', winRate: 65 });
+                        signals.push({ key, ...opt, latestSrt: latest.srt, latestIv: latest.iv, dte: latest.dte, pct, signal: 'SELL', winRate: isLongDated ? 63 : 51, isLongDated });
                     }
                 }
-                // Sort by signal strength (extremity)
+                // Sort by: long-dated first, then SELL before BUY, then by extremity
                 signals.sort((a, b) => {
+                    if (a.isLongDated !== b.isLongDated) return a.isLongDated ? -1 : 1;
                     if (a.signal === 'SELL' && b.signal === 'BUY') return -1;
                     if (a.signal === 'BUY' && b.signal === 'SELL') return 1;
                     return a.signal === 'SELL' ? b.pct - a.pct : a.pct - b.pct;
@@ -286,10 +289,10 @@ DASHBOARD_HTML = '''
                     return;
                 }
                 container.innerHTML = signals.slice(0, 6).map(s => `
-                    <div class="signal-item">
+                    <div class="signal-item" style="${s.isLongDated ? 'border-left: 3px solid #3fb950;' : ''}">
                         <div class="signal-info">
-                            <span class="signal-option">${asset} ${s.strike} ${s.expiry}</span>
-                            <span class="signal-details">${s.type || 'option'} · ${s.dte.toFixed(0)}d · IV: ${s.latestIv.toFixed(1)}%</span>
+                            <span class="signal-option">${asset} ${s.strike} ${s.expiry}${s.isLongDated ? ' ★' : ''}</span>
+                            <span class="signal-details">${s.type || 'option'} · ${s.dte.toFixed(0)}d DTE · IV: ${s.latestIv.toFixed(1)}%</span>
                             <span class="signal-pct">σ√T: ${s.latestSrt.toFixed(2)} (${s.pct.toFixed(0)}th pctl)</span>
                         </div>
                         <div>

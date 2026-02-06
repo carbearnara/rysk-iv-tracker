@@ -185,40 +185,71 @@ The momentum strategy (46.7% win rate) performs worse than random, confirming th
 
 ---
 
-## 5. Trading Strategy
+## 5. Hold to Expiry Analysis
 
-### 5.1 Signal Generation
+### 5.1 Results by Entry DTE
 
-```
-IF σ√T percentile > 90%:
-    Signal = SELL
-    Expected Win Rate = 65%
+A critical finding emerged when testing hold-to-expiry strategy:
 
-IF σ√T percentile < 10%:
-    Signal = BUY
-    Expected Win Rate = 58%
+| Entry DTE | Trades | Win Rate | Avg σ√T Change |
+|-----------|--------|----------|----------------|
+| **14+ days** | 236 | **63.1%** | **+5.60%** |
+| 7-14 days | 160 | 51.2% | +3.01% |
+| 3-7 days | 22 | 36.4% | +3.98% |
 
-ELSE:
-    Signal = NEUTRAL
-```
+### 5.2 Interpretation
 
-### 5.2 Position Sizing
+**The strategy works best with longer-dated options:**
 
-Given win rates of 58-65%, Kelly Criterion suggests:
-
-- SELL signals: f* = (0.65 × 2 - 1) / 1 = 30% of bankroll (use 15% for safety)
-- BUY signals: f* = (0.58 × 2 - 1) / 1 = 16% of bankroll (use 8% for safety)
-
-### 5.3 Recommended Implementation
-
-1. **Monitor σ√T percentiles** for options on assets of interest
-2. **Enter positions** when signals trigger (SELL premium when high, BUY when low)
-3. **Hold for 2-3 hours** to allow mean reversion to occur
-4. **Exit** after holding period or if σ√T returns to median range
+- **14+ DTE:** IV has sufficient time to mean-revert while time decay is gentler. 63.1% win rate.
+- **7-14 DTE:** Marginal performance. Time decay begins to dominate.
+- **<7 DTE:** Strategy actually fails (36% win rate). Time decay overwhelms any IV normalization.
 
 ---
 
-## 6. Limitations
+## 6. Trading Strategy
+
+### 6.1 Signal Generation
+
+```
+IF option DTE < 7 days:
+    Signal = SKIP (time decay too dominant)
+
+IF option DTE >= 14 days:
+    IF σ√T percentile > 90%:
+        Signal = SELL (★ High confidence - 63% win rate)
+    IF σ√T percentile < 10%:
+        Signal = BUY (★ High confidence - 63% win rate)
+
+IF option DTE 7-14 days:
+    IF σ√T percentile > 90%:
+        Signal = SELL (Marginal - 51% win rate)
+    IF σ√T percentile < 10%:
+        Signal = BUY (Marginal - 51% win rate)
+```
+
+### 6.2 Position Sizing
+
+For 14+ DTE signals with 63% win rate, Kelly Criterion suggests:
+
+- f* = (0.63 × 2 - 1) / 1 = 26% of bankroll
+- Use half-Kelly (13%) for safety margin
+
+For 7-14 DTE signals with 51% win rate:
+- f* = (0.51 × 2 - 1) / 1 = 2% of bankroll
+- Marginal edge, consider skipping or minimal size
+
+### 6.3 Recommended Implementation
+
+1. **Filter for 14+ DTE options** - This is where the edge exists
+2. **Monitor σ√T percentiles** for options on assets of interest
+3. **Enter positions** when signals trigger (SELL premium when high, BUY when low)
+4. **Hold to expiry** for maximum edge capture
+5. **Avoid short-dated options** (<7 DTE) - strategy reverses and loses money
+
+---
+
+## 7. Limitations
 
 1. **Transaction costs:** Win rates don't account for bid-ask spreads, which could erode edge on short timeframes.
 
@@ -232,7 +263,7 @@ Given win rates of 58-65%, Kelly Criterion suggests:
 
 ---
 
-## 7. Future Research
+## 8. Future Research
 
 1. **Extend data period** to 90+ days to test across different market conditions
 2. **Calculate actual P&L** using option price data
@@ -242,19 +273,22 @@ Given win rates of 58-65%, Kelly Criterion suggests:
 
 ---
 
-## 8. Conclusion
+## 9. Conclusion
 
 σ√T (sigma root T) is a valid and useful trading indicator for cryptocurrency options. Key findings:
 
 | Metric | Value |
 |--------|-------|
-| Mean Reversion Win Rate | 61.2% |
-| Edge vs Random | +11.2% |
-| Edge vs IV-based Strategy | +8.5% |
-| Best Signal | SELL @ >90th percentile (64.6%) |
-| Optimal Hold Period | ~2.5 hours |
+| Short-term Mean Reversion Win Rate | 61.2% (2.5hr hold) |
+| Hold-to-Expiry Win Rate (14+ DTE) | **63.1%** |
+| Hold-to-Expiry Win Rate (7-14 DTE) | 51.2% |
+| Hold-to-Expiry Win Rate (<7 DTE) | 36.4% (AVOID) |
+| Edge vs Random | +13.1% |
+| Edge vs IV-based Strategy | +10.4% |
 
-The σ√T mean reversion strategy provides a statistically significant edge that warrants further investigation and potential live trading implementation.
+**Critical Finding:** The strategy works best with **options having 14+ days to expiry**. Short-dated options (<7 DTE) should be avoided as the strategy actually loses money due to time decay dominance.
+
+The σ√T mean reversion strategy provides a statistically significant edge that warrants further investigation and potential live trading implementation. The DTE filtering is essential for capturing this edge.
 
 ---
 

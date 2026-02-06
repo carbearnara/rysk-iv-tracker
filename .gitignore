@@ -12,3 +12,4 @@ hype_page.png
 iv_export.csv
 .vercel
 .vercel
+.env*.local
