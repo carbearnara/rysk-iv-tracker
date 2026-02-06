@@ -276,29 +276,31 @@ DASHBOARD_HTML = '''
             container.innerHTML = cards.join('');
         }
         async function refresh() {
-            const asset = document.getElementById('asset-select').value;
-            const days = document.getElementById('days-select').value;
-            const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'σ√T' : 'IV';
-            document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
-            document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
-            const infoIcon = document.getElementById('chart-info-icon');
-            const infoTooltip = document.getElementById('chart-info-tooltip');
-            if (infoIcon && infoTooltip) {
-                infoIcon.style.display = 'inline-flex';
-                if (displayMode === 'svt') {
-                    infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>This shows the premium direction:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
-                } else if (displayMode === 'apr') {
-                    infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
-                } else {
-                    infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+            try {
+                const asset = document.getElementById('asset-select').value;
+                if (!asset) { console.log('No asset selected'); return; }
+                const days = document.getElementById('days-select').value;
+                const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'σ√T' : 'IV';
+                document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
+                document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
+                const infoIcon = document.getElementById('chart-info-icon');
+                const infoTooltip = document.getElementById('chart-info-tooltip');
+                if (infoIcon && infoTooltip) {
+                    infoIcon.style.display = 'inline-flex';
+                    if (displayMode === 'svt') {
+                        infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>This shows the premium direction:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
+                    } else if (displayMode === 'apr') {
+                        infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
+                    } else {
+                        infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+                    }
                 }
-            }
-            const [ivData, latestData, assets] = await Promise.all([
-                (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
-                (await fetch(`/api/latest?asset=${asset}`)).json(),
-                (await fetch('/api/assets')).json(),
-                updateAggregatePricing()
-            ]);
+                const [ivRes, latestRes] = await Promise.all([
+                    fetch(`/api/iv/${asset}?days=${days}`),
+                    fetch(`/api/latest?asset=${asset}`)
+                ]);
+                const [ivData, latestData] = await Promise.all([ivRes.json(), latestRes.json()]);
+                await updateAggregatePricing();
             document.querySelectorAll('.asset-card').forEach(card => {
                 card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
             });
@@ -319,6 +321,7 @@ DASHBOARD_HTML = '''
             }
             updateCharts(ivData, latestData, asset);
             updateTable(latestData);
+            } catch (e) { console.error('Refresh error:', e); }
         }
         function updateCharts(ivData, latestData, asset) {
             const useApr = displayMode === 'apr';
