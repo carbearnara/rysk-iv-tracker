@@ -8,7 +8,7 @@
 
 ## Abstract
 
-This study investigates the predictive power of σ√T (sigma root T) as a trading signal for cryptocurrency options on Rysk Finance. Using 30 days of historical implied volatility data across 8 assets and 86,151 observations, we find that σ√T exhibits strong mean-reverting behavior with statistically significant predictive power. A mean reversion strategy based on extreme σ√T percentiles achieves a 61.2% win rate over 2.5-hour holding periods, significantly outperforming both random baseline (50%) and traditional IV-based signals (52.7%).
+This study investigates the predictive power of σ√T (sigma root T) as a trading signal for cryptocurrency options on Rysk Finance. Using 30 days of historical implied volatility data across 8 assets and 86,151 observations, we find that σ√T exhibits strong mean-reverting behavior with statistically significant predictive power. A mean reversion strategy based on extreme σ√T percentiles achieves a **63.1% win rate when entering options with 14+ days to expiry and holding to expiration**, significantly outperforming both random baseline (50%) and traditional IV-based signals (52.7%). Short-dated options (<7 DTE) show negative results (36.4%), indicating DTE filtering is critical.
 
 ---
 
@@ -54,6 +54,10 @@ Key insight: When σ√T rises, the option premium is increasing despite time de
 - **Unique options:** 506
 - **Options with sufficient data (20+ points):** 426
 - **Data frequency:** ~15 minutes
+
+**Note on Asset Types:**
+- **Calls + Puts available:** BTC, ETH, SOL, HYPE, ZEC
+- **Covered Calls only:** PUMP, PURR, XRP (no put options available)
 
 ### 2.2 σ√T Calculation
 
@@ -110,6 +114,8 @@ For each observation:
 | Trend Continuing | 0% |
 
 **Finding:** σ√T exhibits extremely strong mean-reverting behavior. Virtually all options showed reversion to mean over the observation period.
+
+**Methodology note:** Mean reversion was measured by comparing whether options above their mean in the first half of observations moved toward the mean in the second half (and vice versa). The 100% result indicates consistent reversion over the 30-day window, though this is partly explained by the natural decline of σ√T as options approach expiry.
 
 ### 3.3 Autocorrelation
 
@@ -191,11 +197,13 @@ The momentum strategy (46.7% win rate) performs worse than random, confirming th
 
 A critical finding emerged when testing hold-to-expiry strategy:
 
-| Entry DTE | Trades | Win Rate | Avg σ√T Change |
-|-----------|--------|----------|----------------|
-| **14+ days** | 236 | **63.1%** | **+5.60%** |
-| 7-14 days | 160 | 51.2% | +3.01% |
-| 3-7 days | 22 | 36.4% | +3.98% |
+| Entry DTE | Trades | Win Rate | Avg σ√T Change | Statistical Note |
+|-----------|--------|----------|----------------|------------------|
+| **14+ days** | 236 | **63.1%** | **+5.60%** | Strong sample |
+| 7-14 days | 160 | 51.2% | +3.01% | Moderate sample |
+| 3-7 days | 22 | 36.4% | +3.98% | ⚠️ Small sample |
+
+*Note: The 3-7 day bucket has only 22 trades, making the 36.4% result less statistically reliable. However, the directional finding (short DTE underperforms) is consistent with options theory.*
 
 ### 5.2 Interpretation
 
@@ -239,6 +247,8 @@ For 7-14 DTE signals with 51% win rate:
 - f* = (0.51 × 2 - 1) / 1 = 2% of bankroll
 - Marginal edge, consider skipping or minimal size
 
+**Important caveat:** Kelly calculations above assume simplified 1:1 payoffs. Actual option payoffs are asymmetric—you can lose 100% of premium paid but gains vary with underlying movement. Adjust position sizes based on actual expected payoff ratios for your specific trades.
+
 ### 6.3 Recommended Implementation
 
 1. **Filter for 14+ DTE options** - This is where the edge exists
@@ -251,15 +261,17 @@ For 7-14 DTE signals with 51% win rate:
 
 ## 7. Limitations
 
-1. **Transaction costs:** Win rates don't account for bid-ask spreads, which could erode edge on short timeframes.
+1. **Win rate ≠ Profit:** The backtest measures whether σ√T moved in the predicted direction, not actual trading P&L. A "winning" trade (σ√T moved as predicted) doesn't guarantee profit if option prices moved differently due to other Greeks (delta, gamma, vega).
 
-2. **Liquidity constraints:** Rysk Finance options may have limited liquidity for large positions.
+2. **Transaction costs:** Win rates don't account for bid-ask spreads, which could erode edge on short timeframes.
 
-3. **Sample period:** 30 days of data may not capture all market regimes.
+3. **Liquidity constraints:** Rysk Finance options may have limited liquidity for large positions.
 
-4. **No actual P&L:** Backtest measures σ√T direction, not actual dollar returns.
+4. **Sample period:** 30 days of data may not capture all market regimes (bull/bear markets, high/low volatility environments).
 
 5. **Execution risk:** 15-minute data granularity may miss optimal entry/exit points.
+
+6. **Covered-call-only assets:** PUMP, PURR, and XRP only have call options. Signal interpretation differs—"SELL" signals align with the typical covered call strategy, but "BUY" signals mean buying calls (not selling puts).
 
 ---
 
