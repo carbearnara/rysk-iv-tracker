@@ -122,6 +122,12 @@ DASHBOARD_HTML = '''
         .modal code { background: #21262d; padding: 2px 6px; border-radius: 4px; font-size: 13px; color: #f0883e; }
         .modal-close { float: right; background: none; border: none; color: #8b949e; font-size: 24px; cursor: pointer; padding: 0; line-height: 1; }
         .modal-close:hover { color: #c9d1d9; background: none; }
+        .info-icon { display: inline-flex; align-items: center; justify-content: center; width: 16px; height: 16px; border-radius: 50%; background: #30363d; color: #8b949e; font-size: 11px; font-weight: bold; cursor: help; margin-left: 8px; position: relative; vertical-align: middle; }
+        .info-icon:hover { background: #58a6ff; color: #0d1117; }
+        .info-tooltip { display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%); width: 280px; padding: 12px; background: #161b22; border: 1px solid #30363d; border-radius: 8px; font-size: 12px; font-weight: normal; color: #c9d1d9; line-height: 1.5; z-index: 100; margin-bottom: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.4); }
+        .info-icon:hover .info-tooltip { display: block; }
+        .info-tooltip::after { content: ''; position: absolute; top: 100%; left: 50%; transform: translateX(-50%); border: 6px solid transparent; border-top-color: #30363d; }
+        .info-tooltip strong { color: #58a6ff; }
     </style>
 </head>
 <body>
@@ -164,7 +170,7 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
-            <h2 id="iv-chart-title">IV Over Time</h2>
+            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<div class="info-tooltip" id="chart-info-tooltip"></div></span></h2>
             <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
@@ -275,6 +281,18 @@ DASHBOARD_HTML = '''
             const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'σ√T' : 'IV';
             document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
             document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
+            const infoIcon = document.getElementById('chart-info-icon');
+            const infoTooltip = document.getElementById('chart-info-tooltip');
+            if (displayMode === 'svt') {
+                infoIcon.style.display = 'inline-flex';
+                infoTooltip.innerHTML = '<strong>σ√T = IV × √(DTE/365)</strong><br><br>This shows the premium direction:<br>• <strong>Rising ↑</strong> = Premium increasing (IV beating time decay)<br>• <strong>Falling ↓</strong> = Premium decreasing (theta winning)<br>• <strong>Flat →</strong> = IV and time decay balanced';
+            } else if (displayMode === 'apr') {
+                infoIcon.style.display = 'inline-flex';
+                infoTooltip.innerHTML = '<strong>APR (Annual Percentage Rate)</strong><br><br>The annualized return if you sell this option:<br>• Higher APR = more premium income<br>• APR decreases as option nears expiry<br>• Compare to σ√T mode to see true premium direction';
+            } else {
+                infoIcon.style.display = 'inline-flex';
+                infoTooltip.innerHTML = '<strong>IV (Implied Volatility)</strong><br><br>Market\'s expected price movement:<br>• Higher IV = larger expected moves<br>• IV typically rises before events<br>• Use σ√T mode to see premium impact';
+            }
             const [ivData, latestData, assets] = await Promise.all([
                 (await fetch(`/api/iv/${asset}?days=${days}`)).json(),
                 (await fetch(`/api/latest?asset=${asset}`)).json(),
