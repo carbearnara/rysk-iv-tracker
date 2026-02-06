@@ -140,6 +140,7 @@ DASHBOARD_HTML = '''
                     <div class="toggle-container">
                         <button id="mode-iv" class="toggle-btn active" onclick="setDisplayMode('iv')">IV</button>
                         <button id="mode-apr" class="toggle-btn" onclick="setDisplayMode('apr')">APR</button>
+                        <button id="mode-svt" class="toggle-btn" onclick="setDisplayMode('svt')">σ√T</button>
                     </div>
                 </div>
                 <div class="control-group">
@@ -183,14 +184,30 @@ DASHBOARD_HTML = '''
     </div>
     <script>
         let ivChart = null, strikeChart = null;
-        let displayMode = 'iv'; // 'iv' or 'apr'
+        let displayMode = 'iv'; // 'iv', 'apr', or 'svt'
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
         let spotPrices = {};
         function setDisplayMode(mode) {
             displayMode = mode;
             document.getElementById('mode-iv').classList.toggle('active', mode === 'iv');
             document.getElementById('mode-apr').classList.toggle('active', mode === 'apr');
+            document.getElementById('mode-svt').classList.toggle('active', mode === 'svt');
             refresh();
+        }
+        function calcDTE(expiry, timestamp) {
+            // Parse expiry like "13FEB26" to date
+            const months = {JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};
+            const day = parseInt(expiry.slice(0,2));
+            const mon = months[expiry.slice(2,5).toUpperCase()];
+            const yr = 2000 + parseInt(expiry.slice(5,7));
+            const expiryDate = new Date(yr, mon, day);
+            const dataDate = new Date(timestamp);
+            const dte = Math.max(0, (expiryDate - dataDate) / (1000 * 60 * 60 * 24));
+            return dte;
+        }
+        function calcSigmaRootT(iv, dte) {
+            if (dte <= 0) return 0;
+            return iv * Math.sqrt(dte / 365);
         }
         async function fetchSpotPrices() {
             try {
@@ -255,7 +272,7 @@ DASHBOARD_HTML = '''
         async function refresh() {
             const asset = document.getElementById('asset-select').value;
             const days = document.getElementById('days-select').value;
-            const modeLabel = displayMode === 'apr' ? 'APR' : 'IV';
+            const modeLabel = displayMode === 'apr' ? 'APR' : displayMode === 'svt' ? 'σ√T' : 'IV';
             document.getElementById('iv-chart-title').textContent = `${asset} ${modeLabel} Over Time`;
             document.getElementById('strike-chart-title').textContent = `${asset} ${modeLabel} by Strike`;
             const [ivData, latestData, assets] = await Promise.all([
@@ -268,12 +285,18 @@ DASHBOARD_HTML = '''
                 card.classList.toggle('selected', card.querySelector('.asset-name').textContent === asset);
             });
             document.getElementById('stat-records').textContent = ivData.length;
-            document.getElementById('stat-avg-label').textContent = displayMode === 'apr' ? 'Avg APR' : 'Avg IV';
+            document.getElementById('stat-avg-label').textContent = displayMode === 'apr' ? 'Avg APR' : displayMode === 'svt' ? 'Avg σ√T' : 'Avg IV';
             if (ivData.length > 0) {
-                const valueKey = displayMode === 'apr' ? 'apy' : 'mid_iv';
-                const validData = ivData.filter(d => d[valueKey] != null);
-                const avgValue = validData.length > 0 ? validData.reduce((s,d) => s + d[valueKey], 0) / validData.length : 0;
-                document.getElementById('stat-avg-iv').textContent = avgValue.toFixed(1) + '%';
+                let avgValue;
+                if (displayMode === 'svt') {
+                    const validData = ivData.filter(d => d.mid_iv != null && d.expiry);
+                    avgValue = validData.length > 0 ? validData.reduce((s,d) => s + calcSigmaRootT(d.mid_iv, calcDTE(d.expiry, d.timestamp)), 0) / validData.length : 0;
+                } else {
+                    const valueKey = displayMode === 'apr' ? 'apy' : 'mid_iv';
+                    const validData = ivData.filter(d => d[valueKey] != null);
+                    avgValue = validData.length > 0 ? validData.reduce((s,d) => s + d[valueKey], 0) / validData.length : 0;
+                }
+                document.getElementById('stat-avg-iv').textContent = avgValue.toFixed(1) + (displayMode === 'svt' ? '' : '%');
                 document.getElementById('stat-updated').textContent = new Date(ivData[ivData.length-1].timestamp).toLocaleTimeString();
             }
             updateCharts(ivData, latestData, asset);
@@ -281,14 +304,22 @@ DASHBOARD_HTML = '''
         }
         function updateCharts(ivData, latestData, asset) {
             const useApr = displayMode === 'apr';
-            const yAxisLabel = useApr ? 'APR %' : 'IV %';
-            const valueKey = useApr ? 'apy' : 'mid_iv';
+            const useSvt = displayMode === 'svt';
+            const yAxisLabel = useApr ? 'APR %' : useSvt ? 'σ√T (Premium Proxy)' : 'IV %';
 
             const ctx1 = document.getElementById('iv-chart').getContext('2d');
             const groups = {};
             ivData.forEach(d => {
-                const val = useApr ? d.apy : d.mid_iv;
-                if (val != null) {
+                let val;
+                if (useSvt) {
+                    if (d.mid_iv != null && d.expiry) {
+                        const dte = calcDTE(d.expiry, d.timestamp);
+                        val = calcSigmaRootT(d.mid_iv, dte);
+                    }
+                } else {
+                    val = useApr ? d.apy : d.mid_iv;
+                }
+                if (val != null && val > 0) {
                     const k = `${d.strike}-${d.expiry}`;
                     if (!groups[k]) groups[k] = [];
                     groups[k].push({...d, displayValue: val});
@@ -325,8 +356,16 @@ DASHBOARD_HTML = '''
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
             latestData.forEach(d => {
-                const val = useApr ? d.apy : d.mid_iv;
-                if (val != null) {
+                let val;
+                if (useSvt) {
+                    if (d.mid_iv != null && d.expiry) {
+                        const dte = calcDTE(d.expiry, d.timestamp);
+                        val = calcSigmaRootT(d.mid_iv, dte);
+                    }
+                } else {
+                    val = useApr ? d.apy : d.mid_iv;
+                }
+                if (val != null && val > 0) {
                     if (!strikeData[d.strike]) strikeData[d.strike] = [];
                     strikeData[d.strike].push(val);
                 }
@@ -382,6 +421,16 @@ DASHBOARD_HTML = '''
                 <li><strong style="color:#8b949e">FAIR</strong> - IV is in the middle range</li>
             </ul>
             <p>Requires at least 3 data points in the lookback period.</p>
+
+            <h3>σ√T (Sigma Root T) Mode</h3>
+            <p>This mode shows the <strong>volatility-time value</strong>, calculated as:</p>
+            <p><code>σ√T = IV × √(DTE / 365)</code></p>
+            <p>This metric is proportional to option premium. When σ√T is <strong>rising</strong>, the option premium is increasing despite time decay—meaning IV is rising faster than theta is eroding value.</p>
+            <ul>
+                <li><strong>σ√T rising</strong> → Premium increasing (IV outpacing time decay)</li>
+                <li><strong>σ√T falling</strong> → Premium decreasing (time decay winning)</li>
+                <li><strong>σ√T flat</strong> → IV and time decay are balanced</li>
+            </ul>
 
             <h3>Quote Asset</h3>
             <p>All options are currently tracked against <code>USDT</code> as the quote asset.</p>
