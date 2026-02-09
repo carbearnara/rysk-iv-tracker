@@ -559,6 +559,7 @@ DASHBOARD_HTML = '''
             <p>Data is fetched every 15 minutes. Manual refreshes pull the latest stored data from the database.</p>
         </div>
     </div>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
 '''
