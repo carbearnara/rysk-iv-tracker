@@ -13,3 +13,4 @@ iv_export.csv
 .vercel
 .vercel
 .env*.local
+.claude-context
