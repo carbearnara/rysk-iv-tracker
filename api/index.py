@@ -184,7 +184,13 @@ DASHBOARD_HTML = '''
             <div class="stat"><div class="stat-value" id="stat-updated">-</div><div class="stat-label">Last Update</div></div>
         </div>
         <div class="card" style="margin-bottom: 20px;">
-            <h2><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                <h2 style="margin: 0;"><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
+                <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
+                    <input type="checkbox" id="show-spot-toggle" onchange="toggleSpotOverlay()" style="cursor: pointer;">
+                    Show Spot Price
+                </label>
+            </div>
             <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
         </div>
         <div class="signals-card">
@@ -212,9 +218,32 @@ DASHBOARD_HTML = '''
     <script>
         let ivChart = null, strikeChart = null;
         let displayMode = 'iv'; // 'iv', 'apr', or 'svt'
+        let showSpotOverlay = false;
+        let historicalSpotData = {};
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
         const coveredCallOnly = ['PUMP', 'PURR', 'XRP']; // Assets with only covered calls (no puts)
         let spotPrices = {};
+
+        function toggleSpotOverlay() {
+            showSpotOverlay = document.getElementById('show-spot-toggle').checked;
+            refresh();
+        }
+
+        async function fetchHistoricalSpot(asset, days) {
+            const geckoId = coinGeckoIds[asset];
+            if (!geckoId) return [];
+            const cacheKey = `${asset}-${days}`;
+            if (historicalSpotData[cacheKey]) return historicalSpotData[cacheKey];
+            try {
+                const resp = await fetch(`https://api.coingecko.com/api/v3/coins/${geckoId}/market_chart?vs_currency=usd&days=${days}`);
+                const data = await resp.json();
+                if (data.prices) {
+                    historicalSpotData[cacheKey] = data.prices.map(([ts, price]) => ({ x: new Date(ts), y: price }));
+                    return historicalSpotData[cacheKey];
+                }
+            } catch (e) { console.log('Failed to fetch historical spot:', e); }
+            return [];
+        }
         function setDisplayMode(mode) {
             displayMode = mode;
             document.getElementById('mode-iv').classList.toggle('active', mode === 'iv');
@@ -418,11 +447,11 @@ DASHBOARD_HTML = '''
                 document.getElementById('stat-avg-iv').textContent = avgValue.toFixed(1) + (displayMode === 'svt' ? '' : '%');
                 document.getElementById('stat-updated').textContent = new Date(ivData[ivData.length-1].timestamp).toLocaleTimeString();
             }
-            updateCharts(ivData, latestData, asset);
+            await updateCharts(ivData, latestData, asset);
             updateTable(latestData);
             } catch (e) { console.error('Refresh error:', e); }
         }
-        function updateCharts(ivData, latestData, asset) {
+        async function updateCharts(ivData, latestData, asset) {
             const useApr = displayMode === 'apr';
             const useSvt = displayMode === 'svt';
             const yAxisLabel = useApr ? 'APR %' : useSvt ? 'σ√T' : 'IV %';
@@ -468,10 +497,25 @@ DASHBOARD_HTML = '''
             // Add "other markets" as a single combined indicator if there are more
             if (othersCount > 0) {
                 const otherData = sorted.slice(10).flatMap(({pts}) => pts.map(p => ({x: new Date(p.timestamp), y: p.displayValue})));
-                datasets.push({ label: `Other markets (${othersCount})`, data: otherData, borderColor: '#6e7681', backgroundColor: '#6e7681', borderWidth: 1, pointRadius: 0, pointHoverRadius: 2, tension: 0.1, hidden: true });
+                datasets.push({ label: `Other markets (${othersCount})`, data: otherData, borderColor: '#6e7681', backgroundColor: '#6e7681', borderWidth: 1, pointRadius: 0, pointHoverRadius: 2, tension: 0.1, hidden: true, yAxisID: 'y' });
             }
+            // Add spot price overlay if enabled
+            let scales = {
+                x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                y: { position: 'left', title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }
+            };
+            if (showSpotOverlay) {
+                const days = document.getElementById('days-select').value;
+                const spotData = await fetchHistoricalSpot(asset, days);
+                if (spotData.length > 0) {
+                    datasets.unshift({ label: `${asset} Spot Price`, data: spotData, borderColor: '#f0883e', backgroundColor: 'rgba(240,136,62,0.1)', borderWidth: 2, pointRadius: 0, pointHoverRadius: 4, tension: 0.1, fill: true, yAxisID: 'y1' });
+                    scales.y1 = { position: 'right', title: { display: true, text: 'Spot Price ($)', color: '#f0883e' }, grid: { drawOnChartArea: false }, ticks: { color: '#f0883e' } };
+                }
+            }
+            // Set yAxisID for all other datasets
+            datasets.forEach(ds => { if (!ds.yAxisID) ds.yAxisID = 'y'; });
             if (ivChart) ivChart.destroy();
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales: { x: { type: 'time', time: { unit: 'day', displayFormats: { day: 'MMM d' } }, title: { display: true, text: 'Date', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } }, y: { title: { display: true, text: yAxisLabel, color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } } }, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25 } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25 } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
