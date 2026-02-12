@@ -46,6 +46,7 @@ TOKEN_INFO = {
 # Underlying token address -> tracked asset name
 UNDERLYING_TO_ASSET = {
     '0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb': 'HYPE',
+    '0x5555555555555555555555555555555555555555': 'HYPE',  # synthetic native HYPE
     '0x9fdbda0a5e284c32744d2f17ee5c74b284993463': 'BTC',
 }
 
@@ -1686,6 +1687,15 @@ def cron_index_activity():
             return jsonify({'error': 'Unauthorized'}), 401
     try:
         init_activity_db()
+        # Fix any positions with raw hex asset from before mapping fix
+        try:
+            conn = get_db()
+            conn.cursor().execute(
+                "UPDATE onchain_positions SET asset = 'HYPE' WHERE asset LIKE '0x5555%'")
+            conn.commit()
+            conn.close()
+        except Exception:
+            pass
         result = index_activity_batch()
         return jsonify(result)
     except Exception as e:
