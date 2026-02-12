@@ -20,6 +20,10 @@
     {
       "path": "/api/cron/fetch",
       "schedule": "0 0 * * *"
+    },
+    {
+      "path": "/api/cron/index-activity",
+      "schedule": "*/15 * * * *"
     }
   ]
 }

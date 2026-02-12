@@ -8,6 +8,7 @@ Uses PostgreSQL (Supabase) for data storage.
 import os
 import json
 import re
+import time
 from datetime import datetime, timedelta
 from flask import Flask, jsonify, request, render_template_string
 import requests
@@ -21,6 +22,36 @@ app = Flask(__name__)
 # Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 CRON_SECRET = os.environ.get('CRON_SECRET', '')
+
+# On-Chain Activity Configuration
+HYPERVM_RPC = 'https://rpc.hyperliquid.xyz/evm'
+CONTROLLER_CONTRACT = '0x577b846A95711015769452F7f29d8054Cf087964'
+OTOKEN_FACTORY = '0xD8eB81D7D31b420b435Cb3C61a8B4E7805e12Eff'
+RYSK_MARGIN_POOL = '0x691a5fc3a81a144e36c6C4fBCa1fC82843c80d0d'
+FEE_RECIPIENT = '0xFb69f38Eae27705720Eb4AABB04be9edbec5B555'
+
+# Event topic hashes (keccak256 of event signatures)
+TOPIC_OTOKEN_CREATED = '0xddd3483766ccee42359dad67a40f9b28d76f9d433dc39bca1474b98e065038e5'
+TOPIC_SHORT_OTOKEN_MINTED = '0x4d7f96086c92b2f9a254ad21548b1c1f2d99502c7949508866349b96bb1a8d8a'
+TOPIC_COLLATERAL_DEPOSITED = '0xbfab88b861f171b7db714f00e5966131253918d55ddba816c3eb94657d102390'
+TOPIC_TRANSFER_TO_USER = '0x60a0dc9b39e897fcb3abc1fbd47021fe4df80b4bbc379d3ebd3a5dd756895a14'
+
+# Known token addresses on HyperEVM (lowercase for comparison)
+TOKEN_INFO = {
+    '0xb88339cb7199b77e23db6e890353e22632ba630f': {'symbol': 'USDC', 'decimals': 6},
+    '0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb': {'symbol': 'WHYPE', 'decimals': 6},
+    '0x9fdbda0a5e284c32744d2f17ee5c74b284993463': {'symbol': 'UBTC', 'decimals': 8},
+}
+
+# Underlying token address -> tracked asset name
+UNDERLYING_TO_ASSET = {
+    '0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb': 'HYPE',
+    '0x9fdbda0a5e284c32744d2f17ee5c74b284993463': 'BTC',
+}
+
+LOGS_BLOCK_RANGE = 1000
+MAX_BLOCKS_PER_CRON = 500000
+ACTIVITY_START_BLOCK = int(os.environ.get('ACTIVITY_START_BLOCK', '0'))
 
 # Dashboard HTML template (embedded for serverless)
 DASHBOARD_HTML = '''
@@ -153,6 +184,7 @@ DASHBOARD_HTML = '''
                     <p class="subtitle">You gotta Rysk it IV the Biscuit</p>
                 </div>
                 <button class="btn-secondary" onclick="openModal()">Methodology</button>
+                <a href="/activity" style="padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; text-decoration: none; font-size: 14px;">On-Chain Activity</a>
             </div>
             <div class="controls">
                 <div class="control-group">
@@ -608,6 +640,382 @@ DASHBOARD_HTML = '''
 </html>
 '''
 
+ACTIVITY_HTML = '''
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rysk On-Chain Activity</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍪</text></svg>">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0d1117; color: #c9d1d9; min-height: 100vh; padding: 20px; }
+        .container { max-width: 1400px; margin: 0 auto; }
+        header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; padding-bottom: 20px; border-bottom: 1px solid #30363d; flex-wrap: wrap; gap: 15px; }
+        h1 { font-size: 24px; color: #58a6ff; margin-bottom: 4px; }
+        .subtitle { font-size: 14px; color: #8b949e; font-style: italic; }
+        .controls { display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }
+        select { padding: 8px 12px; border: 1px solid #30363d; border-radius: 6px; background: #161b22; color: #c9d1d9; font-size: 14px; min-width: 120px; }
+        .btn-secondary { padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; text-decoration: none; font-size: 14px; cursor: pointer; }
+        .btn-secondary:hover { background: #30363d; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 20px; }
+        .card h2 { font-size: 16px; margin-bottom: 15px; color: #8b949e; }
+        .chart-container { position: relative; height: 300px; }
+        .chart-container-large { position: relative; height: 450px; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px; }
+        @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+        .stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 15px; margin-bottom: 20px; }
+        .stat { background: #21262d; padding: 15px; border-radius: 6px; text-align: center; }
+        .stat-value { font-size: 24px; font-weight: bold; color: #58a6ff; }
+        .stat-label { font-size: 12px; color: #8b949e; margin-top: 5px; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th, td { padding: 10px; text-align: left; border-bottom: 1px solid #21262d; }
+        th { color: #8b949e; font-weight: 500; text-transform: uppercase; font-size: 11px; }
+        tr:hover { background: #21262d; }
+        .loading { display: flex; align-items: center; justify-content: center; height: 200px; color: #8b949e; }
+        footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #30363d; text-align: center; color: #8b949e; font-size: 13px; }
+        footer a { color: #58a6ff; text-decoration: none; }
+        footer a:hover { text-decoration: underline; }
+        .heatmap { display: grid; grid-template-columns: 50px repeat(24, 1fr); gap: 2px; }
+        .heatmap-cell { aspect-ratio: 1; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: default; min-height: 24px; }
+        .heatmap-label { font-size: 11px; color: #8b949e; display: flex; align-items: center; justify-content: center; }
+        .heatmap-header { font-size: 10px; color: #8b949e; text-align: center; }
+        .tag-put { color: #f85149; }
+        .tag-call { color: #3fb950; }
+        a.tx-link { color: #58a6ff; text-decoration: none; }
+        a.tx-link:hover { text-decoration: underline; }
+        @media (max-width: 600px) {
+            .stats { grid-template-columns: repeat(3, 1fr); gap: 10px; }
+            .stat { padding: 10px; }
+            .stat-value { font-size: 18px; }
+            header { flex-direction: column; align-items: flex-start; }
+            .controls { width: 100%; }
+            body { padding: 10px; }
+            table { font-size: 11px; }
+            th, td { padding: 6px 4px; }
+            .heatmap { grid-template-columns: 40px repeat(24, 1fr); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>On-Chain Activity</h1>
+                <p class="subtitle">RyskHype Position Tracker</p>
+            </div>
+            <div class="controls">
+                <a href="/" class="btn-secondary">IV Dashboard</a>
+                <select id="asset-filter">
+                    <option value="all">All Assets</option>
+                    <option value="BTC">BTC</option>
+                    <option value="HYPE">HYPE</option>
+                    <option value="ETH">ETH</option>
+                    <option value="SOL">SOL</option>
+                </select>
+                <select id="days-select">
+                    <option value="7">7 days</option>
+                    <option value="30" selected>30 days</option>
+                    <option value="90">90 days</option>
+                    <option value="365">All time</option>
+                </select>
+            </div>
+        </header>
+        <div class="stats">
+            <div class="stat"><div class="stat-value" id="stat-positions">-</div><div class="stat-label">Total Positions</div></div>
+            <div class="stat"><div class="stat-value" id="stat-users">-</div><div class="stat-label">Unique Users</div></div>
+            <div class="stat"><div class="stat-value" id="stat-premium">-</div><div class="stat-label">Total Premium</div></div>
+        </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>Volume Over Time</h2>
+            <div class="chart-container-large"><canvas id="volume-chart"></canvas></div>
+        </div>
+        <div class="grid">
+            <div class="card">
+                <h2>Premium Distribution</h2>
+                <div class="chart-container"><canvas id="premium-chart"></canvas></div>
+            </div>
+            <div class="card">
+                <h2>Popular Strikes</h2>
+                <div class="chart-container"><canvas id="strikes-chart"></canvas></div>
+            </div>
+        </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>IV at Trade Time vs Current IV</h2>
+            <div class="chart-container-large"><canvas id="correlation-chart"></canvas></div>
+        </div>
+        <div class="card" style="margin-bottom: 20px;">
+            <h2>Activity Heatmap (UTC)</h2>
+            <div id="heatmap-container"></div>
+        </div>
+        <div class="card">
+            <h2>Recent Positions</h2>
+            <div id="positions-table"><div class="loading">Loading...</div></div>
+        </div>
+        <footer>Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.</footer>
+    </div>
+    <script>
+        let volumeChart = null, premiumChart = null, strikesChart = null, correlationChart = null;
+        const assetColors = {'BTC': '#f7931a', 'HYPE': '#58a6ff', 'ETH': '#627eea', 'SOL': '#00ffa3', 'XRP': '#23292f', 'HYPE': '#a371f7'};
+
+        async function init() {
+            document.getElementById('asset-filter').onchange = refresh;
+            document.getElementById('days-select').onchange = refresh;
+            await refresh();
+            setInterval(refresh, 5 * 60 * 1000);
+        }
+
+        async function refresh() {
+            const asset = document.getElementById('asset-filter').value;
+            const days = document.getElementById('days-select').value;
+            const params = `asset=${asset}&days=${days}`;
+            try {
+                const [stats, volume, positions, heatmap, strikes, correlation] = await Promise.all([
+                    fetch(`/api/activity/stats?${params}`).then(r => r.json()),
+                    fetch(`/api/activity/volume?${params}`).then(r => r.json()),
+                    fetch(`/api/activity/positions?${params}&limit=50`).then(r => r.json()),
+                    fetch(`/api/activity/heatmap?${params}`).then(r => r.json()),
+                    fetch(`/api/activity/strikes?${params}`).then(r => r.json()),
+                    fetch(`/api/activity/correlation?${params}`).then(r => r.json()),
+                ]);
+                updateStats(stats);
+                updateVolumeChart(volume);
+                updatePremiumChart(positions);
+                updateStrikesChart(strikes);
+                updateCorrelationChart(correlation);
+                updateHeatmap(heatmap);
+                updatePositionsTable(positions);
+            } catch (e) { console.error('Refresh error:', e); }
+        }
+
+        function updateStats(data) {
+            document.getElementById('stat-positions').textContent = (data.total_positions || 0).toLocaleString();
+            document.getElementById('stat-users').textContent = (data.unique_users || 0).toLocaleString();
+            const prem = data.total_premium || 0;
+            document.getElementById('stat-premium').textContent = prem >= 1000 ? '$' + (prem/1000).toFixed(1) + 'k' : '$' + prem.toFixed(2);
+        }
+
+        function updateVolumeChart(data) {
+            const ctx = document.getElementById('volume-chart').getContext('2d');
+            const dates = [...new Set(data.map(d => d.date))].sort();
+            const assets = [...new Set(data.map(d => d.asset))];
+            const datasets = assets.map(asset => ({
+                label: asset,
+                data: dates.map(date => {
+                    const entry = data.find(d => d.date === date && d.asset === asset);
+                    return entry ? entry.total_premium : 0;
+                }),
+                backgroundColor: assetColors[asset] || '#8b949e',
+                stack: 'premium',
+            }));
+            const countByDate = {};
+            data.forEach(d => { countByDate[d.date] = (countByDate[d.date] || 0) + d.trade_count; });
+            datasets.push({
+                label: 'Trade Count',
+                data: dates.map(d => countByDate[d] || 0),
+                type: 'line',
+                borderColor: '#f0883e',
+                backgroundColor: 'transparent',
+                yAxisID: 'y1',
+                tension: 0.2,
+                pointRadius: 3,
+            });
+            if (volumeChart) volumeChart.destroy();
+            volumeChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels: dates, datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                        y: { position: 'left', title: { display: true, text: 'Premium', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' }, stacked: true },
+                        y1: { position: 'right', title: { display: true, text: 'Trades', color: '#f0883e' }, grid: { drawOnChartArea: false }, ticks: { color: '#f0883e' } },
+                    },
+                    plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, font: { size: 11 } } } },
+                },
+            });
+        }
+
+        function updatePremiumChart(positions) {
+            const ctx = document.getElementById('premium-chart').getContext('2d');
+            if (!positions.length) { if (premiumChart) premiumChart.destroy(); return; }
+            const premiums = positions.filter(p => p.premium_amount > 0).map(p => p.premium_amount);
+            if (!premiums.length) { if (premiumChart) premiumChart.destroy(); return; }
+            const maxP = Math.max(...premiums);
+            const bucketCount = 10;
+            const bucketSize = maxP / bucketCount;
+            const buckets = Array(bucketCount).fill(0);
+            premiums.forEach(p => {
+                const idx = Math.min(Math.floor(p / bucketSize), bucketCount - 1);
+                buckets[idx]++;
+            });
+            const labels = buckets.map((_, i) => {
+                const lo = (i * bucketSize).toFixed(1);
+                const hi = ((i + 1) * bucketSize).toFixed(1);
+                return `${lo}-${hi}`;
+            });
+            if (premiumChart) premiumChart.destroy();
+            premiumChart = new Chart(ctx, {
+                type: 'bar',
+                data: { labels, datasets: [{ label: 'Positions', data: buckets, backgroundColor: '#58a6ff' }] },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'Premium Amount', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e', maxRotation: 45 } },
+                        y: { title: { display: true, text: 'Count', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                    },
+                    plugins: { legend: { display: false } },
+                },
+            });
+        }
+
+        function updateStrikesChart(data) {
+            const ctx = document.getElementById('strikes-chart').getContext('2d');
+            if (!data.length) { if (strikesChart) strikesChart.destroy(); return; }
+            const top = data.slice(0, 15);
+            const labels = top.map(d => `${d.strike} ${d.expiry} ${d.is_put ? 'P' : 'C'}`);
+            const counts = top.map(d => d.count);
+            const premiums = top.map(d => d.total_premium || 0);
+            if (strikesChart) strikesChart.destroy();
+            strikesChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels,
+                    datasets: [
+                        { label: 'Trades', data: counts, backgroundColor: '#58a6ff', yAxisID: 'y' },
+                        { label: 'Premium', data: premiums, backgroundColor: '#3fb950', yAxisID: 'y1' },
+                    ]
+                },
+                options: {
+                    responsive: true, maintainAspectRatio: false, indexAxis: 'y',
+                    scales: {
+                        x: { position: 'bottom', grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                        x1: { position: 'top', grid: { drawOnChartArea: false }, ticks: { color: '#3fb950' } },
+                        y: { grid: { color: '#21262d' }, ticks: { color: '#8b949e', font: { size: 10 } } },
+                    },
+                    plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, font: { size: 11 } } } },
+                },
+            });
+        }
+
+        function updateCorrelationChart(data) {
+            const ctx = document.getElementById('correlation-chart').getContext('2d');
+            const valid = data.filter(d => d.trade_iv != null && d.current_iv != null);
+            if (!valid.length) {
+                if (correlationChart) correlationChart.destroy();
+                correlationChart = null;
+                ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+                ctx.fillStyle = '#8b949e';
+                ctx.textAlign = 'center';
+                ctx.fillText('No correlation data available yet', ctx.canvas.width / 2, ctx.canvas.height / 2);
+                return;
+            }
+            const byAsset = {};
+            valid.forEach(d => {
+                if (!byAsset[d.asset]) byAsset[d.asset] = [];
+                byAsset[d.asset].push({ x: d.trade_iv, y: d.current_iv });
+            });
+            const datasets = Object.entries(byAsset).map(([asset, points]) => ({
+                label: asset,
+                data: points,
+                backgroundColor: assetColors[asset] || '#8b949e',
+                pointRadius: 5,
+                pointHoverRadius: 7,
+            }));
+            const allIVs = valid.flatMap(d => [d.trade_iv, d.current_iv]);
+            const minIV = Math.min(...allIVs) * 0.9;
+            const maxIV = Math.max(...allIVs) * 1.1;
+            datasets.push({
+                label: 'No Change Line',
+                data: [{ x: minIV, y: minIV }, { x: maxIV, y: maxIV }],
+                type: 'line',
+                borderColor: '#30363d',
+                borderDash: [5, 5],
+                borderWidth: 1,
+                pointRadius: 0,
+                showLine: true,
+            });
+            if (correlationChart) correlationChart.destroy();
+            correlationChart = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets },
+                options: {
+                    responsive: true, maintainAspectRatio: false,
+                    scales: {
+                        x: { title: { display: true, text: 'IV at Trade Time (%)', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                        y: { title: { display: true, text: 'Current IV (%)', color: '#8b949e' }, grid: { color: '#21262d' }, ticks: { color: '#8b949e' } },
+                    },
+                    plugins: {
+                        legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(ctx) {
+                                    return `${ctx.dataset.label}: Trade IV ${ctx.parsed.x.toFixed(1)}% → Current IV ${ctx.parsed.y.toFixed(1)}%`;
+                                }
+                            }
+                        }
+                    },
+                },
+            });
+        }
+
+        function updateHeatmap(data) {
+            const container = document.getElementById('heatmap-container');
+            const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+            const counts = {};
+            let maxCount = 0;
+            data.forEach(d => {
+                const key = `${d.dow}-${d.hour}`;
+                counts[key] = d.count;
+                if (d.count > maxCount) maxCount = d.count;
+            });
+            if (maxCount === 0) {
+                container.innerHTML = '<div class="loading">No activity data yet</div>';
+                return;
+            }
+            let html = '<div class="heatmap">';
+            html += '<div class="heatmap-label"></div>';
+            for (let h = 0; h < 24; h++) html += `<div class="heatmap-header">${h}</div>`;
+            for (let d = 0; d < 7; d++) {
+                html += `<div class="heatmap-label">${days[d]}</div>`;
+                for (let h = 0; h < 24; h++) {
+                    const count = counts[`${d}-${h}`] || 0;
+                    const intensity = count / maxCount;
+                    const bg = count > 0 ? `rgba(88,166,255,${0.15 + intensity * 0.85})` : '#161b22';
+                    html += `<div class="heatmap-cell" style="background:${bg}" title="${days[d]} ${h}:00 UTC - ${count} trades">${count || ''}</div>`;
+                }
+            }
+            html += '</div>';
+            container.innerHTML = html;
+        }
+
+        function updatePositionsTable(positions) {
+            const container = document.getElementById('positions-table');
+            if (!positions.length) { container.innerHTML = '<div class="loading">No positions found</div>'; return; }
+            const rows = positions.map(p => {
+                const time = p.block_timestamp ? new Date(p.block_timestamp).toLocaleString() : '-';
+                const user = p.user_address ? (p.user_address.slice(0, 6) + '...' + p.user_address.slice(-4)) : '-';
+                const type = p.is_put ? '<span class="tag-put">PUT</span>' : '<span class="tag-call">CALL</span>';
+                const premium = p.premium_amount != null ? p.premium_amount.toFixed(4) : '-';
+                const collToken = p.collateral_token || '';
+                const ivLabel = p.trade_iv != null ? p.trade_iv.toFixed(1) + '%' : '-';
+                const txShort = p.tx_hash ? p.tx_hash.slice(0, 10) + '...' : '-';
+                const txLink = p.tx_hash ? `<a class="tx-link" href="https://purrsec.com/tx/${p.tx_hash}" target="_blank">${txShort}</a>` : '-';
+                return `<tr><td>${time}</td><td title="${p.user_address || ''}">${user}</td><td>${p.asset}</td><td>${p.strike}</td><td>${p.expiry}</td><td>${type}</td><td>${premium} ${collToken}</td><td>${txLink}</td></tr>`;
+            }).join('');
+            container.innerHTML = `<table><thead><tr><th>Time</th><th>User</th><th>Asset</th><th>Strike</th><th>Expiry</th><th>Type</th><th>Premium</th><th>Tx</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
+
+        init();
+    </script>
+<script defer src="/_vercel/insights/script.js"></script>
+</body>
+</html>
+'''
+
 
 def get_db():
     """Get database connection."""
@@ -637,6 +1045,466 @@ def init_db():
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_asset_time ON iv_snapshots(asset, timestamp)")
     conn.commit()
     conn.close()
+
+
+def init_activity_db():
+    """Initialize on-chain activity database schema."""
+    conn = get_db()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS indexer_state (
+            contract_address TEXT PRIMARY KEY,
+            last_block BIGINT NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS onchain_positions (
+            id SERIAL PRIMARY KEY,
+            tx_hash TEXT UNIQUE NOT NULL,
+            block_number BIGINT NOT NULL,
+            block_timestamp TIMESTAMP,
+            user_address TEXT NOT NULL,
+            asset TEXT NOT NULL,
+            strike REAL NOT NULL,
+            expiry TEXT NOT NULL,
+            is_put BOOLEAN NOT NULL,
+            collateral_amount REAL,
+            collateral_token TEXT,
+            premium_amount REAL,
+            fee_amount REAL,
+            otoken_amount REAL,
+            otoken_address TEXT
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_asset_time ON onchain_positions(asset, block_timestamp)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_user ON onchain_positions(user_address)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_positions_timestamp ON onchain_positions(block_timestamp)")
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS otoken_registry (
+            otoken_address TEXT PRIMARY KEY,
+            underlying TEXT,
+            strike REAL,
+            expiry TEXT,
+            expiry_timestamp BIGINT,
+            is_put BOOLEAN,
+            collateral TEXT,
+            asset TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+
+# ============== RPC Helpers ==============
+
+_last_rpc_call = 0
+
+
+def rpc_call(method, params=None, retries=4):
+    """Make a JSON-RPC call to HyperEVM with retry logic."""
+    global _last_rpc_call
+    last_err = None
+    for attempt in range(retries):
+        now = time.time()
+        elapsed = now - _last_rpc_call
+        min_gap = 0.6  # 600ms between calls (~100 req/min)
+        if elapsed < min_gap:
+            time.sleep(min_gap - elapsed)
+        _last_rpc_call = time.time()
+
+        try:
+            resp = requests.post(HYPERVM_RPC, json={
+                'jsonrpc': '2.0',
+                'method': method,
+                'params': params or [],
+                'id': 1,
+            }, timeout=15)
+            result = resp.json()
+            if 'error' in result:
+                err = result['error']
+                # Rate limited - wait longer and retry
+                if isinstance(err, dict) and err.get('code') == -32005:
+                    if attempt < retries - 1:
+                        time.sleep(5 * (attempt + 1))
+                        continue
+                raise Exception(f"RPC error: {err}")
+            return result.get('result')
+        except requests.exceptions.Timeout:
+            last_err = Exception("RPC timeout")
+            if attempt < retries - 1:
+                time.sleep(3 * (attempt + 1))
+                continue
+        except Exception as e:
+            last_err = e
+            if attempt < retries - 1 and 'rate' in str(e).lower():
+                time.sleep(5 * (attempt + 1))
+                continue
+            elif attempt < retries - 1:
+                time.sleep(2 ** attempt)
+                continue
+            break
+    raise last_err
+
+
+def get_block_number():
+    """Get the latest block number."""
+    result = rpc_call('eth_blockNumber')
+    return int(result, 16)
+
+
+def get_logs(from_block, to_block, address, topics):
+    """Get logs from HyperEVM."""
+    return rpc_call('eth_getLogs', [{
+        'address': address,
+        'topics': topics,
+        'fromBlock': hex(from_block),
+        'toBlock': hex(to_block),
+    }]) or []
+
+
+def get_receipt(tx_hash):
+    """Get transaction receipt."""
+    return rpc_call('eth_getTransactionReceipt', [tx_hash])
+
+
+def get_block_timestamp(block_number):
+    """Get block timestamp."""
+    block = rpc_call('eth_getBlockByNumber', [hex(block_number), False])
+    if block and 'timestamp' in block:
+        return int(block['timestamp'], 16)
+    return None
+
+
+# ============== ABI Decode Helpers ==============
+
+def decode_address(topic_hex):
+    """Decode an address from a 32-byte hex topic."""
+    h = topic_hex.replace('0x', '')
+    return '0x' + h[-40:]
+
+
+def decode_uint256(data_hex, offset=0):
+    """Decode a uint256 from data at given 32-byte word offset."""
+    h = data_hex.replace('0x', '')
+    start = offset * 64
+    return int(h[start:start + 64], 16)
+
+
+def decode_bool(data_hex, offset=0):
+    """Decode a bool from data at given 32-byte word offset."""
+    return decode_uint256(data_hex, offset) != 0
+
+
+def format_expiry_timestamp(unix_ts):
+    """Convert unix timestamp to DDMMMYY format matching iv_snapshots."""
+    dt = datetime.utcfromtimestamp(unix_ts)
+    months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC']
+    return f"{dt.day:02d}{months[dt.month - 1]}{dt.year % 100:02d}"
+
+
+def token_to_asset(address):
+    """Map a token address to its tracked asset name."""
+    return UNDERLYING_TO_ASSET.get(address.lower(), address[:10])
+
+
+# ============== Otoken Registry ==============
+
+_otoken_cache = {}
+
+
+def get_otoken_info(otoken_address, conn=None):
+    """Get otoken info from cache or DB."""
+    addr = otoken_address.lower()
+    if addr in _otoken_cache:
+        return _otoken_cache[addr]
+    try:
+        close_conn = False
+        if conn is None:
+            conn = get_db()
+            close_conn = True
+        try:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM otoken_registry WHERE otoken_address = %s", (addr,))
+            row = cursor.fetchone()
+            if row:
+                info = dict(row)
+                _otoken_cache[addr] = info
+                return info
+        finally:
+            if close_conn:
+                conn.close()
+    except Exception:
+        pass
+    return None
+
+
+def save_otoken_info(otoken_address, info, conn=None):
+    """Save otoken info to DB and cache."""
+    addr = otoken_address.lower()
+    _otoken_cache[addr] = info
+    try:
+        close_conn = False
+        if conn is None:
+            conn = get_db()
+            close_conn = True
+        try:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO otoken_registry (otoken_address, underlying, strike, expiry, expiry_timestamp, is_put, collateral, asset)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (otoken_address) DO NOTHING
+            """, (addr, info.get('underlying'), info['strike'], info['expiry'],
+                  info.get('expiry_timestamp'), info['is_put'], info.get('collateral'), info['asset']))
+            conn.commit()
+        finally:
+            if close_conn:
+                conn.close()
+    except Exception:
+        pass  # Cache-only mode when DB unavailable
+
+
+# ============== Event Decoder ==============
+
+def decode_position_from_receipt(receipt, conn=None):
+    """Decode position data from a transaction receipt."""
+    logs = receipt.get('logs', [])
+
+    position = {
+        'tx_hash': receipt['transactionHash'],
+        'block_number': int(receipt['blockNumber'], 16),
+        'user_address': None,
+        'asset': None,
+        'strike': None,
+        'expiry': None,
+        'is_put': None,
+        'collateral_amount': None,
+        'collateral_token': None,
+        'premium_amount': None,
+        'fee_amount': None,
+        'otoken_amount': None,
+        'otoken_address': None,
+    }
+
+    otoken_created_info = None
+
+    for log in logs:
+        topics = log.get('topics', [])
+        if not topics:
+            continue
+        topic0 = topics[0].lower()
+        addr = log.get('address', '').lower()
+        data = log.get('data', '0x')
+
+        # OtokenCreated from OtokenFactory
+        if topic0 == TOPIC_OTOKEN_CREATED.lower() and addr == OTOKEN_FACTORY.lower():
+            if len(topics) < 4:
+                continue
+            underlying = decode_address(topics[1])
+            collateral = decode_address(topics[3])
+            # data: tokenAddress(0), creator(1), strikePrice(2), expiry(3), isPut(4), extra(5)
+            otoken_addr = decode_address(data[:66])  # 0x + 64 hex chars
+            strike_raw = decode_uint256(data, 2)
+            expiry_raw = decode_uint256(data, 3)
+            is_put = decode_bool(data, 4)
+
+            asset_name = token_to_asset(underlying)
+
+            position['strike'] = strike_raw / 1e8
+            position['expiry'] = format_expiry_timestamp(expiry_raw)
+            position['is_put'] = is_put
+            position['asset'] = asset_name
+            position['otoken_address'] = otoken_addr.lower()
+
+            otoken_created_info = {
+                'underlying': underlying.lower(),
+                'strike': strike_raw / 1e8,
+                'expiry': format_expiry_timestamp(expiry_raw),
+                'expiry_timestamp': expiry_raw,
+                'is_put': is_put,
+                'collateral': collateral.lower(),
+                'asset': asset_name,
+            }
+
+        # ShortOtokenMinted from Controller
+        elif topic0 == TOPIC_SHORT_OTOKEN_MINTED.lower() and addr == CONTROLLER_CONTRACT.lower():
+            if len(topics) < 4:
+                continue
+            otoken_addr = decode_address(topics[1])
+            amount = decode_uint256(data, 1)  # data[0]=vaultId, data[1]=amount
+
+            position['otoken_address'] = otoken_addr.lower()
+            position['otoken_amount'] = amount / 1e8
+
+        # CollateralAssetDeposited from Controller
+        elif topic0 == TOPIC_COLLATERAL_DEPOSITED.lower() and addr == CONTROLLER_CONTRACT.lower():
+            if len(topics) < 4:
+                continue
+            asset_addr = decode_address(topics[1])
+            amount = decode_uint256(data, 1)  # data[0]=vaultId, data[1]=amount
+
+            token = TOKEN_INFO.get(asset_addr.lower())
+            if token:
+                position['collateral_amount'] = amount / (10 ** token['decimals'])
+                position['collateral_token'] = token['symbol']
+
+        # TransferToUser from Rysk MarginPool
+        elif topic0 == TOPIC_TRANSFER_TO_USER.lower() and addr == RYSK_MARGIN_POOL.lower():
+            if len(topics) < 4:
+                continue
+            asset_addr = decode_address(topics[1])
+            to_addr = decode_address(topics[3])
+            amount = decode_uint256(data, 0)
+
+            token = TOKEN_INFO.get(asset_addr.lower())
+            if token:
+                scaled = amount / (10 ** token['decimals'])
+                if to_addr.lower() == FEE_RECIPIENT.lower():
+                    position['fee_amount'] = (position.get('fee_amount') or 0) + scaled
+                else:
+                    position['premium_amount'] = (position.get('premium_amount') or 0) + scaled
+                    position['user_address'] = to_addr
+
+    # Save otoken info if we saw OtokenCreated
+    if otoken_created_info and position['otoken_address']:
+        save_otoken_info(position['otoken_address'], otoken_created_info, conn)
+
+    # Look up otoken from registry if not seen in this receipt
+    if position['strike'] is None and position['otoken_address']:
+        info = get_otoken_info(position['otoken_address'], conn)
+        if info:
+            position['strike'] = info['strike']
+            position['expiry'] = info['expiry']
+            position['is_put'] = info['is_put']
+            position['asset'] = info['asset']
+
+    # Validate minimum required fields
+    if position['strike'] is not None and position['asset'] is not None:
+        if not position['user_address']:
+            position['user_address'] = 'unknown'
+        return position
+    return None
+
+
+# ============== Indexer ==============
+
+def index_activity_batch(max_blocks=None):
+    """Index a batch of blocks for on-chain activity."""
+    if max_blocks is None:
+        max_blocks = MAX_BLOCKS_PER_CRON
+
+    conn = get_db()
+    cursor = conn.cursor()
+
+    # Get last indexed block
+    cursor.execute("SELECT last_block FROM indexer_state WHERE contract_address = %s",
+                   (CONTROLLER_CONTRACT.lower(),))
+    row = cursor.fetchone()
+
+    if row:
+        last_block = row['last_block']
+    else:
+        last_block = ACTIVITY_START_BLOCK
+        cursor.execute(
+            "INSERT INTO indexer_state (contract_address, last_block) VALUES (%s, %s)",
+            (CONTROLLER_CONTRACT.lower(), last_block))
+        conn.commit()
+
+    current_block = get_block_number()
+    from_block = last_block + 1
+    to_block = min(from_block + max_blocks - 1, current_block)
+
+    if from_block > current_block:
+        conn.close()
+        return {'from_block': from_block, 'to_block': to_block,
+                'positions_found': 0, 'blocks_remaining': 0, 'status': 'caught_up'}
+
+    positions_found = 0
+    processed_tx_hashes = set()
+    block_timestamps = {}
+
+    scan_from = from_block
+    while scan_from <= to_block:
+        scan_to = min(scan_from + LOGS_BLOCK_RANGE - 1, to_block)
+
+        try:
+            logs = get_logs(scan_from, scan_to, CONTROLLER_CONTRACT,
+                          [TOPIC_SHORT_OTOKEN_MINTED])
+        except Exception as e:
+            err_msg = str(e).lower()
+            if 'too many' in err_msg or 'range' in err_msg or 'limit' in err_msg:
+                smaller_range = max(50, LOGS_BLOCK_RANGE // 10)
+                scan_to = min(scan_from + smaller_range - 1, to_block)
+                try:
+                    logs = get_logs(scan_from, scan_to, CONTROLLER_CONTRACT,
+                                  [TOPIC_SHORT_OTOKEN_MINTED])
+                except Exception:
+                    scan_from = scan_to + 1
+                    continue
+            else:
+                raise
+
+        if logs:
+            tx_hashes = list(set(log['transactionHash'] for log in logs))
+
+            for tx_hash in tx_hashes:
+                if tx_hash in processed_tx_hashes:
+                    continue
+                processed_tx_hashes.add(tx_hash)
+
+                # Check if already indexed
+                cursor.execute("SELECT 1 FROM onchain_positions WHERE tx_hash = %s", (tx_hash,))
+                if cursor.fetchone():
+                    continue
+
+                receipt = get_receipt(tx_hash)
+                if not receipt:
+                    continue
+
+                position = decode_position_from_receipt(receipt, conn)
+                if not position:
+                    continue
+
+                # Get block timestamp (cached per block)
+                block_num = position['block_number']
+                if block_num not in block_timestamps:
+                    ts = get_block_timestamp(block_num)
+                    block_timestamps[block_num] = datetime.utcfromtimestamp(ts) if ts else None
+                position['block_timestamp'] = block_timestamps[block_num]
+
+                cursor.execute("""
+                    INSERT INTO onchain_positions
+                    (tx_hash, block_number, block_timestamp, user_address, asset, strike, expiry, is_put,
+                     collateral_amount, collateral_token, premium_amount, fee_amount, otoken_amount, otoken_address)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (tx_hash) DO NOTHING
+                """, (
+                    position['tx_hash'], position['block_number'], position['block_timestamp'],
+                    position['user_address'], position['asset'], position['strike'], position['expiry'],
+                    position['is_put'], position['collateral_amount'], position['collateral_token'],
+                    position['premium_amount'], position['fee_amount'], position['otoken_amount'],
+                    position['otoken_address']
+                ))
+                conn.commit()
+                positions_found += 1
+
+        scan_from = scan_to + 1
+
+    # Update last indexed block
+    cursor.execute(
+        "UPDATE indexer_state SET last_block = %s, updated_at = CURRENT_TIMESTAMP WHERE contract_address = %s",
+        (to_block, CONTROLLER_CONTRACT.lower()))
+    conn.commit()
+    conn.close()
+
+    blocks_remaining = current_block - to_block
+    return {
+        'from_block': from_block,
+        'to_block': to_block,
+        'positions_found': positions_found,
+        'blocks_remaining': blocks_remaining,
+        'status': 'indexed',
+    }
 
 
 # ============== Routes ==============
@@ -796,6 +1664,211 @@ def manual_fetch():
         return jsonify({'success': True, 'records': 0})
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+@app.route('/activity')
+def activity_page():
+    """Serve on-chain activity dashboard."""
+    return render_template_string(ACTIVITY_HTML)
+
+
+@app.route('/api/cron/index-activity')
+def cron_index_activity():
+    """Cron endpoint to index on-chain activity."""
+    auth = request.headers.get('Authorization', '')
+    if CRON_SECRET and auth != f'Bearer {CRON_SECRET}':
+        if request.headers.get('x-vercel-cron') != '1':
+            return jsonify({'error': 'Unauthorized'}), 401
+    try:
+        init_activity_db()
+        result = index_activity_batch()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/activity/positions')
+def api_activity_positions():
+    """Get recent on-chain positions."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    limit = request.args.get('limit', 100, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = "SELECT * FROM onchain_positions WHERE block_timestamp > %s"
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND asset = %s"
+            params.append(asset)
+        query += " ORDER BY block_timestamp DESC LIMIT %s"
+        params.append(min(limit, 500))
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
+
+
+@app.route('/api/activity/volume')
+def api_activity_volume():
+    """Get volume over time aggregated by day and asset."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = """
+            SELECT DATE(block_timestamp) as date, asset,
+                   COUNT(*) as trade_count,
+                   SUM(COALESCE(premium_amount, 0)) as total_premium,
+                   SUM(COALESCE(fee_amount, 0)) as total_fees
+            FROM onchain_positions
+            WHERE block_timestamp > %s
+        """
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND asset = %s"
+            params.append(asset)
+        query += " GROUP BY DATE(block_timestamp), asset ORDER BY date"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
+
+
+@app.route('/api/activity/stats')
+def api_activity_stats():
+    """Get summary stats for on-chain activity."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = """
+            SELECT COUNT(*) as total_positions,
+                   COUNT(DISTINCT user_address) as unique_users,
+                   SUM(COALESCE(premium_amount, 0)) as total_premium,
+                   SUM(COALESCE(fee_amount, 0)) as total_fees
+            FROM onchain_positions
+            WHERE block_timestamp > %s
+        """
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND asset = %s"
+            params.append(asset)
+        cursor.execute(query, params)
+        row = cursor.fetchone()
+        conn.close()
+        return jsonify(dict(row) if row else {})
+    except Exception as e:
+        return jsonify({})
+
+
+@app.route('/api/activity/heatmap')
+def api_activity_heatmap():
+    """Get hour-of-day vs day-of-week trade counts."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = """
+            SELECT EXTRACT(HOUR FROM block_timestamp)::int as hour,
+                   EXTRACT(DOW FROM block_timestamp)::int as dow,
+                   COUNT(*) as count
+            FROM onchain_positions
+            WHERE block_timestamp > %s
+        """
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND asset = %s"
+            params.append(asset)
+        query += " GROUP BY hour, dow ORDER BY dow, hour"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
+
+
+@app.route('/api/activity/strikes')
+def api_activity_strikes():
+    """Get strike/expiry distribution."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = """
+            SELECT strike, expiry, is_put,
+                   COUNT(*) as count,
+                   SUM(COALESCE(premium_amount, 0)) as total_premium,
+                   SUM(COALESCE(otoken_amount, 0)) as total_contracts
+            FROM onchain_positions
+            WHERE block_timestamp > %s
+        """
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND asset = %s"
+            params.append(asset)
+        query += " GROUP BY strike, expiry, is_put ORDER BY count DESC LIMIT 50"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
+
+
+@app.route('/api/activity/correlation')
+def api_activity_correlation():
+    """Get positions correlated with IV at time of trade."""
+    asset = request.args.get('asset')
+    days = request.args.get('days', 30, type=int)
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        since = datetime.utcnow() - timedelta(days=days)
+        query = """
+            SELECT p.tx_hash, p.asset, p.strike, p.expiry, p.is_put,
+                   p.premium_amount, p.block_timestamp,
+                   iv.mid_iv as trade_iv,
+                   latest.mid_iv as current_iv
+            FROM onchain_positions p
+            LEFT JOIN LATERAL (
+                SELECT mid_iv FROM iv_snapshots
+                WHERE asset = p.asset AND strike = p.strike AND expiry = p.expiry
+                AND timestamp <= p.block_timestamp
+                ORDER BY timestamp DESC LIMIT 1
+            ) iv ON true
+            LEFT JOIN LATERAL (
+                SELECT mid_iv FROM iv_snapshots
+                WHERE asset = p.asset AND strike = p.strike AND expiry = p.expiry
+                ORDER BY timestamp DESC LIMIT 1
+            ) latest ON true
+            WHERE p.block_timestamp > %s
+        """
+        params = [since]
+        if asset and asset != 'all':
+            query += " AND p.asset = %s"
+            params.append(asset)
+        query += " ORDER BY p.block_timestamp DESC LIMIT 200"
+        cursor.execute(query, params)
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
 
 
 # ============== Scraping Logic ==============
