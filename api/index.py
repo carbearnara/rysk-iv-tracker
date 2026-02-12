@@ -50,8 +50,9 @@ UNDERLYING_TO_ASSET = {
 }
 
 LOGS_BLOCK_RANGE = 1000
-MAX_BLOCKS_PER_CRON = 500000
-ACTIVITY_START_BLOCK = int(os.environ.get('ACTIVITY_START_BLOCK', '0'))
+MAX_BLOCKS_PER_CRON = 10000
+ACTIVITY_START_BLOCK = int(os.environ.get('ACTIVITY_START_BLOCK', '25000000'))
+INDEXER_TIME_BUDGET = 8  # seconds - stop before Vercel 10s timeout
 
 # Dashboard HTML template (embedded for serverless)
 DASHBOARD_HTML = '''
@@ -1422,9 +1423,14 @@ def index_activity_batch(max_blocks=None):
     positions_found = 0
     processed_tx_hashes = set()
     block_timestamps = {}
+    start_time = time.time()
 
     scan_from = from_block
     while scan_from <= to_block:
+        # Stop before Vercel function timeout
+        if time.time() - start_time > INDEXER_TIME_BUDGET:
+            to_block = scan_from - 1
+            break
         scan_to = min(scan_from + LOGS_BLOCK_RANGE - 1, to_block)
 
         try:
