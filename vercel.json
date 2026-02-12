@@ -23,7 +23,7 @@
     },
     {
       "path": "/api/cron/index-activity",
-      "schedule": "*/15 * * * *"
+      "schedule": "0 0 * * *"
     }
   ]
 }
