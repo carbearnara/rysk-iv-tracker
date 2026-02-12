@@ -41,6 +41,7 @@ TOKEN_INFO = {
     '0xb88339cb7199b77e23db6e890353e22632ba630f': {'symbol': 'USDC', 'decimals': 6},
     '0xb8ce59fc3717ada4c02eadf9682a9e934f625ebb': {'symbol': 'WHYPE', 'decimals': 6},
     '0x9fdbda0a5e284c32744d2f17ee5c74b284993463': {'symbol': 'UBTC', 'decimals': 8},
+    '0xfd739d4e423301ce9385c1fb8850539d657c296d': {'symbol': 'kHYPE', 'decimals': 18},
 }
 
 # Underlying token address -> tracked asset name
@@ -1769,12 +1770,16 @@ def cron_index_activity():
             return jsonify({'error': 'Unauthorized'}), 401
     try:
         init_activity_db()
-        # Fix positions with raw hex asset from before mapping fixes
+        # One-time data fixes from early mapping bugs
         try:
             conn = get_db()
             cursor = conn.cursor()
             cursor.execute("UPDATE onchain_positions SET asset = 'HYPE' WHERE asset LIKE '0x5555%'")
             cursor.execute("UPDATE onchain_positions SET asset = 'ETH' WHERE asset LIKE '0xbe67%'")
+            # Fix kHYPE collateral (200e18 = 200 kHYPE)
+            cursor.execute(
+                "UPDATE onchain_positions SET collateral_amount = 200, collateral_token = 'kHYPE' "
+                "WHERE collateral_amount IS NULL AND tx_hash = '0x4324c4f0a6aac76db8fd40ea2521a747b50ee0e7ae17d070b2fc5a3b1870cbe3'")
             conn.commit()
             conn.close()
         except Exception:
