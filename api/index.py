@@ -1102,11 +1102,17 @@ def init_activity_db():
 _last_rpc_call = 0
 
 
-def rpc_call(method, params=None, retries=4):
+_indexer_deadline = None
+
+
+def rpc_call(method, params=None, retries=2):
     """Make a JSON-RPC call to HyperEVM with retry logic."""
     global _last_rpc_call
     last_err = None
     for attempt in range(retries):
+        # Bail if we're past the indexer deadline
+        if _indexer_deadline and time.time() > _indexer_deadline:
+            raise Exception("time budget exceeded")
         now = time.time()
         elapsed = now - _last_rpc_call
         min_gap = 0.6  # 600ms between calls (~100 req/min)
@@ -1120,29 +1126,28 @@ def rpc_call(method, params=None, retries=4):
                 'method': method,
                 'params': params or [],
                 'id': 1,
-            }, timeout=15)
+            }, timeout=5)
             result = resp.json()
             if 'error' in result:
                 err = result['error']
-                # Rate limited - wait longer and retry
                 if isinstance(err, dict) and err.get('code') == -32005:
                     if attempt < retries - 1:
-                        time.sleep(5 * (attempt + 1))
+                        time.sleep(1.5)
                         continue
                 raise Exception(f"RPC error: {err}")
             return result.get('result')
         except requests.exceptions.Timeout:
             last_err = Exception("RPC timeout")
             if attempt < retries - 1:
-                time.sleep(3 * (attempt + 1))
+                time.sleep(1)
                 continue
         except Exception as e:
             last_err = e
             if attempt < retries - 1 and 'rate' in str(e).lower():
-                time.sleep(5 * (attempt + 1))
+                time.sleep(1.5)
                 continue
             elif attempt < retries - 1:
-                time.sleep(2 ** attempt)
+                time.sleep(1)
                 continue
             break
     raise last_err
@@ -1391,6 +1396,8 @@ def decode_position_from_receipt(receipt, conn=None):
 
 def index_activity_batch(max_blocks=None):
     """Index a batch of blocks for on-chain activity."""
+    global _indexer_deadline
+    _indexer_deadline = time.time() + INDEXER_TIME_BUDGET
     if max_blocks is None:
         max_blocks = MAX_BLOCKS_PER_CRON
 
@@ -1438,7 +1445,10 @@ def index_activity_batch(max_blocks=None):
                           [TOPIC_SHORT_OTOKEN_MINTED])
         except Exception as e:
             err_msg = str(e).lower()
-            if 'too many' in err_msg or 'range' in err_msg or 'limit' in err_msg:
+            if 'time budget' in err_msg:
+                to_block = scan_from - 1
+                break
+            if 'too many' in err_msg or 'range' in err_msg or 'limit' in err_msg or 'rate' in err_msg:
                 smaller_range = max(50, LOGS_BLOCK_RANGE // 10)
                 scan_to = min(scan_from + smaller_range - 1, to_block)
                 try:
@@ -1448,12 +1458,15 @@ def index_activity_batch(max_blocks=None):
                     scan_from = scan_to + 1
                     continue
             else:
-                raise
+                to_block = scan_from - 1
+                break
 
         if logs:
             tx_hashes = list(set(log['transactionHash'] for log in logs))
 
             for tx_hash in tx_hashes:
+                if _indexer_deadline and time.time() > _indexer_deadline:
+                    break
                 if tx_hash in processed_tx_hashes:
                     continue
                 processed_tx_hashes.add(tx_hash)
@@ -1463,7 +1476,10 @@ def index_activity_batch(max_blocks=None):
                 if cursor.fetchone():
                     continue
 
-                receipt = get_receipt(tx_hash)
+                try:
+                    receipt = get_receipt(tx_hash)
+                except Exception:
+                    continue
                 if not receipt:
                     continue
 
@@ -1474,7 +1490,10 @@ def index_activity_batch(max_blocks=None):
                 # Get block timestamp (cached per block)
                 block_num = position['block_number']
                 if block_num not in block_timestamps:
-                    ts = get_block_timestamp(block_num)
+                    try:
+                        ts = get_block_timestamp(block_num)
+                    except Exception:
+                        ts = None
                     block_timestamps[block_num] = datetime.utcfromtimestamp(ts) if ts else None
                 position['block_timestamp'] = block_timestamps[block_num]
 
