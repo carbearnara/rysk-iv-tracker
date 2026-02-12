@@ -50,8 +50,8 @@ UNDERLYING_TO_ASSET = {
 }
 
 LOGS_BLOCK_RANGE = 1000
-MAX_BLOCKS_PER_CRON = 10000
-ACTIVITY_START_BLOCK = int(os.environ.get('ACTIVITY_START_BLOCK', '25000000'))
+MAX_BLOCKS_PER_CRON = 50000
+ACTIVITY_START_BLOCK = int(os.environ.get('ACTIVITY_START_BLOCK', '27000000'))
 INDEXER_TIME_BUDGET = 8  # seconds - stop before Vercel 10s timeout
 
 # Dashboard HTML template (embedded for serverless)
@@ -1105,52 +1105,28 @@ _last_rpc_call = 0
 _indexer_deadline = None
 
 
-def rpc_call(method, params=None, retries=2):
-    """Make a JSON-RPC call to HyperEVM with retry logic."""
+def rpc_call(method, params=None):
+    """Make a JSON-RPC call to HyperEVM. No retries - fail fast for Vercel."""
     global _last_rpc_call
-    last_err = None
-    for attempt in range(retries):
-        # Bail if we're past the indexer deadline
-        if _indexer_deadline and time.time() > _indexer_deadline:
-            raise Exception("time budget exceeded")
-        now = time.time()
-        elapsed = now - _last_rpc_call
-        min_gap = 0.6  # 600ms between calls (~100 req/min)
-        if elapsed < min_gap:
-            time.sleep(min_gap - elapsed)
-        _last_rpc_call = time.time()
+    if _indexer_deadline and time.time() > _indexer_deadline:
+        raise Exception("time budget exceeded")
+    now = time.time()
+    elapsed = now - _last_rpc_call
+    min_gap = 0.6
+    if elapsed < min_gap:
+        time.sleep(min_gap - elapsed)
+    _last_rpc_call = time.time()
 
-        try:
-            resp = requests.post(HYPERVM_RPC, json={
-                'jsonrpc': '2.0',
-                'method': method,
-                'params': params or [],
-                'id': 1,
-            }, timeout=5)
-            result = resp.json()
-            if 'error' in result:
-                err = result['error']
-                if isinstance(err, dict) and err.get('code') == -32005:
-                    if attempt < retries - 1:
-                        time.sleep(1.5)
-                        continue
-                raise Exception(f"RPC error: {err}")
-            return result.get('result')
-        except requests.exceptions.Timeout:
-            last_err = Exception("RPC timeout")
-            if attempt < retries - 1:
-                time.sleep(1)
-                continue
-        except Exception as e:
-            last_err = e
-            if attempt < retries - 1 and 'rate' in str(e).lower():
-                time.sleep(1.5)
-                continue
-            elif attempt < retries - 1:
-                time.sleep(1)
-                continue
-            break
-    raise last_err
+    resp = requests.post(HYPERVM_RPC, json={
+        'jsonrpc': '2.0',
+        'method': method,
+        'params': params or [],
+        'id': 1,
+    }, timeout=5)
+    result = resp.json()
+    if 'error' in result:
+        raise Exception(f"RPC error: {result['error']}")
+    return result.get('result')
 
 
 def get_block_number():
