@@ -1247,6 +1247,75 @@ def save_otoken_info(otoken_address, info, conn=None):
         pass  # Cache-only mode when DB unavailable
 
 
+# Symbol prefix -> asset name mapping
+SYMBOL_TO_ASSET = {
+    'UETH': 'ETH', 'UBTC': 'BTC', 'USOL': 'SOL', 'WHYPE': 'HYPE',
+    'HYPE': 'HYPE', 'ETH': 'ETH', 'BTC': 'BTC', 'SOL': 'SOL',
+}
+
+
+def query_otoken_onchain(otoken_address):
+    """Query otoken contract on-chain for its properties via name() and strikePrice()."""
+    addr = otoken_address.lower()
+    # name() = 0x06fdde03 - returns ABI-encoded string like "UETHUSDC 20-February-2026 1750Put USDC Collateral"
+    name_result = rpc_call('eth_call', [{'to': addr, 'data': '0x06fdde03'}, 'latest'])
+    if not name_result or len(name_result) < 130:
+        return None
+    # Decode ABI string
+    data_hex = name_result[2:]
+    str_len = int(data_hex[64:128], 16)
+    name_str = bytes.fromhex(data_hex[128:128 + str_len * 2]).decode('utf-8', errors='replace')
+
+    # strikePrice() = 0xc52987cf
+    strike_result = rpc_call('eth_call', [{'to': addr, 'data': '0xc52987cf'}, 'latest'])
+    if not strike_result:
+        return None
+    strike = int(strike_result, 16) / 1e8
+
+    # Parse name: "UETHUSDC 20-February-2026 1750Put USDC Collateral"
+    parts = name_str.split()
+    if len(parts) < 3:
+        return None
+
+    # Extract asset from first word (e.g. "UETHUSDC" -> "UETH" by removing known suffixes)
+    pair = parts[0]
+    asset_name = None
+    for prefix in sorted(SYMBOL_TO_ASSET.keys(), key=len, reverse=True):
+        if pair.upper().startswith(prefix):
+            asset_name = SYMBOL_TO_ASSET[prefix]
+            break
+    if not asset_name:
+        asset_name = pair[:4]
+
+    # Parse expiry from date part (e.g. "20-February-2026")
+    expiry = None
+    from datetime import datetime as _dt
+    for p in parts[1:]:
+        try:
+            dt = _dt.strptime(p, '%d-%B-%Y')
+            expiry = dt.strftime('%d%b%y').upper()
+            expiry_ts = int(dt.timestamp())
+            break
+        except ValueError:
+            continue
+
+    # Parse isPut from name (e.g. "1750Put" or "1750Call")
+    is_put = 'put' in name_str.lower()
+
+    if expiry is None:
+        return None
+
+    return {
+        'strike': strike,
+        'expiry': expiry,
+        'is_put': is_put,
+        'asset': asset_name,
+        'underlying': None,
+        'expiry_timestamp': expiry_ts,
+        'collateral': None,
+    }
+
+
 # ============== Event Decoder ==============
 
 def decode_position_from_receipt(receipt, conn=None):
@@ -1360,6 +1429,19 @@ def decode_position_from_receipt(receipt, conn=None):
             position['expiry'] = info['expiry']
             position['is_put'] = info['is_put']
             position['asset'] = info['asset']
+
+    # Last resort: query otoken contract on-chain for its properties
+    if position['strike'] is None and position['otoken_address']:
+        try:
+            info = query_otoken_onchain(position['otoken_address'])
+            if info:
+                position['strike'] = info['strike']
+                position['expiry'] = info['expiry']
+                position['is_put'] = info['is_put']
+                position['asset'] = info['asset']
+                save_otoken_info(position['otoken_address'], info, conn)
+        except Exception:
+            pass
 
     # Validate minimum required fields
     if position['strike'] is not None and position['asset'] is not None:
@@ -1687,11 +1769,12 @@ def cron_index_activity():
             return jsonify({'error': 'Unauthorized'}), 401
     try:
         init_activity_db()
-        # Fix any positions with raw hex asset from before mapping fix
+        # Fix positions with raw hex asset from before mapping fixes
         try:
             conn = get_db()
-            conn.cursor().execute(
-                "UPDATE onchain_positions SET asset = 'HYPE' WHERE asset LIKE '0x5555%'")
+            cursor = conn.cursor()
+            cursor.execute("UPDATE onchain_positions SET asset = 'HYPE' WHERE asset LIKE '0x5555%'")
+            cursor.execute("UPDATE onchain_positions SET asset = 'ETH' WHERE asset LIKE '0xbe67%'")
             conn.commit()
             conn.close()
         except Exception:
