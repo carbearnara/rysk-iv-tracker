@@ -1394,7 +1394,11 @@ def index_activity_batch(max_blocks=None):
             (CONTROLLER_CONTRACT.lower(), last_block))
         conn.commit()
 
-    current_block = get_block_number()
+    try:
+        current_block = get_block_number()
+    except Exception:
+        # If rate limited on first call, estimate current block far ahead
+        current_block = last_block + max_blocks
     from_block = last_block + 1
     to_block = min(from_block + max_blocks - 1, current_block)
 
