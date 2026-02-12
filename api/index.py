@@ -1410,7 +1410,7 @@ def index_activity_batch(max_blocks=None):
     row = cursor.fetchone()
 
     if row:
-        last_block = row['last_block']
+        last_block = max(row['last_block'], ACTIVITY_START_BLOCK)
     else:
         last_block = ACTIVITY_START_BLOCK
         cursor.execute(
