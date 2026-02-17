@@ -298,7 +298,7 @@ DASHBOARD_HTML = '''
             return dte;
         }
         function calcSigmaRootT(iv, dte) {
-            if (dte <= 0) return 0;
+            if (!dte || dte <= 0 || isNaN(dte) || !iv || isNaN(iv)) return 0;
             return iv * Math.sqrt(dte / 365);
         }
         async function updateSignals(asset) {
@@ -472,8 +472,8 @@ DASHBOARD_HTML = '''
             if (ivData.length > 0) {
                 let avgValue;
                 if (displayMode === 'svt') {
-                    const validData = ivData.filter(d => d.mid_iv != null && d.expiry);
-                    avgValue = validData.length > 0 ? validData.reduce((s,d) => s + calcSigmaRootT(d.mid_iv, calcDTE(d.expiry, d.timestamp)), 0) / validData.length : 0;
+                    const srtValues = ivData.filter(d => d.mid_iv != null && d.expiry).map(d => calcSigmaRootT(d.mid_iv, calcDTE(d.expiry, d.timestamp))).filter(v => !isNaN(v) && isFinite(v));
+                    avgValue = srtValues.length > 0 ? srtValues.reduce((s, v) => s + v, 0) / srtValues.length : 0;
                 } else {
                     const valueKey = displayMode === 'apr' ? 'apy' : 'mid_iv';
                     const validData = ivData.filter(d => d[valueKey] != null);
@@ -503,7 +503,7 @@ DASHBOARD_HTML = '''
                 } else {
                     val = useApr ? d.apy : d.mid_iv;
                 }
-                if (val != null && val > 0) {
+                if (val != null && !isNaN(val) && isFinite(val) && val > 0) {
                     const k = `${d.strike}-${d.expiry}`;
                     if (!groups[k]) groups[k] = [];
                     groups[k].push({...d, displayValue: val});
@@ -564,7 +564,7 @@ DASHBOARD_HTML = '''
                 } else {
                     val = useApr ? d.apy : d.mid_iv;
                 }
-                if (val != null && val > 0) {
+                if (val != null && !isNaN(val) && isFinite(val) && val > 0) {
                     if (!strikeData[d.strike]) strikeData[d.strike] = [];
                     strikeData[d.strike].push(val);
                 }
