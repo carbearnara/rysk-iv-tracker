@@ -1882,6 +1882,14 @@ def api_forecasts(asset):
         return jsonify([])
 
 
+@app.route('/api/admin/dburl')
+def admin_dburl():
+    """Temporary endpoint to retrieve DATABASE_URL for GitHub secret setup. Remove after use."""
+    if request.headers.get('x-vercel-cron') != '1':
+        return jsonify({'error': 'Unauthorized'}), 401
+    return jsonify({'url': DATABASE_URL})
+
+
 @app.route('/api/cron/fetch')
 def cron_fetch():
     """Cron endpoint to fetch IV data."""
