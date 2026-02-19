@@ -310,6 +310,8 @@ DASHBOARD_HTML = '''
             if (!ivChart) return;
             const asset = document.getElementById('asset-select').value;
             const useSvt = displayMode === 'svt';
+            const useApr = displayMode === 'apr';
+            const spot = spotPrices[asset];
 
             // Remove existing forecast datasets
             ivChart.data.datasets = ivChart.data.datasets.filter(ds => !ds._isForecast && !ds._isForecastBand);
@@ -333,13 +335,25 @@ DASHBOARD_HTML = '''
                         const sorted = [...ds.data].sort((a, b) => a.x - b.x);
                         const bridge = sorted[sorted.length - 1];
                         const color = ds.borderColor;
+                        const isPut = (fc.option_type || '').toLowerCase() === 'put';
+                        const strike = fc.points[0] ? parseFloat(fc.points[0].strike) : 0;
                         const fcPoints = fc.points.map(f => {
                             let val = f.forecast_mid_iv;
-                            if (useSvt && f.expiry) {
-                                const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                            const dte = f.expiry ? calcDTE(f.expiry, f.forecast_timestamp) : 0;
+                            if (useSvt && dte > 0) {
                                 val = calcSigmaRootT(f.forecast_mid_iv, dte);
+                            } else if (useApr && spot && dte > 0) {
+                                val = calcAprFromIV(f.forecast_mid_iv, strike, spot, dte, isPut);
                             }
-                            return { x: new Date(f.forecast_timestamp), y: val, q10: f.quantile_10, q90: f.quantile_90 };
+                            let q10 = f.quantile_10, q90 = f.quantile_90;
+                            if (useSvt && dte > 0) {
+                                q10 = q10 != null ? calcSigmaRootT(q10, dte) : null;
+                                q90 = q90 != null ? calcSigmaRootT(q90, dte) : null;
+                            } else if (useApr && spot && dte > 0) {
+                                q10 = q10 != null ? calcAprFromIV(q10, strike, spot, dte, isPut) : null;
+                                q90 = q90 != null ? calcAprFromIV(q90, strike, spot, dte, isPut) : null;
+                            }
+                            return { x: new Date(f.forecast_timestamp), y: val, q10, q90 };
                         }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
                         if (!fcPoints.length) return;
                         ivChart.data.datasets.push({
@@ -352,13 +366,8 @@ DASHBOARD_HTML = '''
                         const bandUpper = [{ x: bridge.x, y: bridge.y }];
                         const bandLower = [{ x: bridge.x, y: bridge.y }];
                         fcPoints.forEach(p => {
-                            let q10 = p.q10, q90 = p.q90;
-                            if (q10 != null && q90 != null) {
-                                if (useSvt && fc.points[0] && fc.points[0].expiry) {
-                                    const dte = calcDTE(fc.points[0].expiry, p.x.toISOString());
-                                    q10 = calcSigmaRootT(q10, dte); q90 = calcSigmaRootT(q90, dte);
-                                }
-                                bandUpper.push({ x: p.x, y: q90 }); bandLower.push({ x: p.x, y: q10 });
+                            if (p.q10 != null && p.q90 != null) {
+                                bandUpper.push({ x: p.x, y: p.q90 }); bandLower.push({ x: p.x, y: p.q10 });
                             }
                         });
                         if (bandUpper.length > 1) {
@@ -415,6 +424,32 @@ DASHBOARD_HTML = '''
         function calcSigmaRootT(iv, dte) {
             if (!dte || dte <= 0 || isNaN(dte) || !iv || isNaN(iv)) return 0;
             return iv * Math.sqrt(dte / 365);
+        }
+        function calcAprFromIV(iv, strike, spot, dte, isPut) {
+            // Black-Scholes forward pricing: IV -> option premium -> APR
+            if (!iv || !strike || !spot || !dte || dte <= 0 || spot <= 0 || strike <= 0) return null;
+            const sigma = iv / 100;
+            const T = dte / 365;
+            const r = 0.05;
+            const d1 = (Math.log(spot / strike) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
+            const d2 = d1 - sigma * Math.sqrt(T);
+            // Standard normal CDF via error function approximation
+            function normCDF(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+            function erf(x) {
+                const a1=0.254829592, a2=-0.284496736, a3=1.421413741, a4=-1.453152027, a5=1.061405429, p=0.3275911;
+                const sign = x < 0 ? -1 : 1; x = Math.abs(x);
+                const t = 1 / (1 + p * x);
+                return sign * (1 - (((((a5*t+a4)*t)+a3)*t+a2)*t+a1)*t*Math.exp(-x*x));
+            }
+            let premium;
+            if (isPut) {
+                premium = strike * Math.exp(-r * T) * normCDF(-d2) - spot * normCDF(-d1);
+            } else {
+                premium = spot * normCDF(d1) - strike * Math.exp(-r * T) * normCDF(d2);
+            }
+            if (premium <= 0) return null;
+            const collateral = isPut ? strike : spot;
+            return (premium / collateral) * (365 / dte) * 100;
         }
         async function updateSignals(asset) {
             const container = document.getElementById('signals-container');
@@ -674,6 +709,7 @@ DASHBOARD_HTML = '''
                         fcGroups[k].points.push(f);
                     });
                     // For each top-10 historical line, add matching forecast
+                    const spot = spotPrices[asset];
                     top10.forEach(({k, pts}, i) => {
                         const fc = fcGroups[k];
                         if (!fc) return;
@@ -682,15 +718,26 @@ DASHBOARD_HTML = '''
                         const bridge = lastHistPt[lastHistPt.length - 1];
                         const bridgeVal = bridge.displayValue;
                         const bridgeTime = new Date(bridge.timestamp);
+                        const isPut = (fc.option_type || '').toLowerCase() === 'put';
+                        const strike = fc.points[0] ? parseFloat(fc.points[0].strike) : 0;
                         // Transform forecast values based on display mode
                         const fcPoints = fc.points.map(f => {
                             let val = f.forecast_mid_iv;
-                            if (useSvt && f.expiry) {
-                                const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                            const dte = f.expiry ? calcDTE(f.expiry, f.forecast_timestamp) : 0;
+                            if (useSvt && dte > 0) {
                                 val = calcSigmaRootT(f.forecast_mid_iv, dte);
+                            } else if (useApr && spot && dte > 0) {
+                                val = calcAprFromIV(f.forecast_mid_iv, strike, spot, dte, isPut);
                             }
-                            // In APR mode, fall back to showing predicted IV
-                            return { x: new Date(f.forecast_timestamp), y: val, q10: f.quantile_10, q90: f.quantile_90 };
+                            let q10 = f.quantile_10, q90 = f.quantile_90;
+                            if (useSvt && dte > 0) {
+                                q10 = q10 != null ? calcSigmaRootT(q10, dte) : null;
+                                q90 = q90 != null ? calcSigmaRootT(q90, dte) : null;
+                            } else if (useApr && spot && dte > 0) {
+                                q10 = q10 != null ? calcAprFromIV(q10, strike, spot, dte, isPut) : null;
+                                q90 = q90 != null ? calcAprFromIV(q90, strike, spot, dte, isPut) : null;
+                            }
+                            return { x: new Date(f.forecast_timestamp), y: val, q10, q90 };
                         }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
                         if (!fcPoints.length) return;
                         // Bridge: prepend last historical point
@@ -713,15 +760,9 @@ DASHBOARD_HTML = '''
                         const bandUpper = [{ x: bridgeTime, y: bridgeVal }];
                         const bandLower = [{ x: bridgeTime, y: bridgeVal }];
                         fcPoints.forEach(p => {
-                            let q10 = p.q10, q90 = p.q90;
-                            if (q10 != null && q90 != null) {
-                                if (useSvt && fc.points[0] && fc.points[0].expiry) {
-                                    const dte = calcDTE(fc.points[0].expiry, p.x.toISOString());
-                                    q10 = calcSigmaRootT(q10, dte);
-                                    q90 = calcSigmaRootT(q90, dte);
-                                }
-                                bandUpper.push({ x: p.x, y: q90 });
-                                bandLower.push({ x: p.x, y: q10 });
+                            if (p.q10 != null && p.q90 != null) {
+                                bandUpper.push({ x: p.x, y: p.q90 });
+                                bandLower.push({ x: p.x, y: p.q10 });
                             }
                         });
                         if (bandUpper.length > 1) {
