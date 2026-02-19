@@ -2,8 +2,8 @@ name: Run IV Forecasts
 
 on:
   schedule:
-    # Every 6 hours
-    - cron: '0 */6 * * *'
+    # Once daily at 06:00 UTC
+    - cron: '0 6 * * *'
   workflow_dispatch: # Manual trigger
 
 jobs:
