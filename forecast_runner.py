@@ -5,6 +5,11 @@ Standalone script that reads historical IV data from Supabase,
 runs TimesFM inference to produce 7-day forecasts, and writes
 the results back to Supabase.
 
+Approach: For each asset, build a dense asset-level IV series (median
+across all active options at each hour), forecast that single series
+with TimesFM, then distribute back to individual options using their
+characteristic IV ratio.
+
 Intended to run locally or via GitHub Actions (not on Vercel).
 
 Usage:
@@ -15,6 +20,7 @@ Usage:
 import os
 import sys
 import random
+import statistics
 from datetime import datetime, timedelta
 
 import psycopg2
@@ -31,6 +37,7 @@ HORIZON = 168  # 7 days * 24 hours
 MODEL_VERSION = 'timesfm-2.5-200m'
 MIN_HISTORY_POINTS = 48  # need at least 48 hourly points (~2 days)
 MIN_DTE_DAYS = 7  # skip options expiring within 7 days
+RATIO_LOOKBACK_HOURS = 48  # hours of recent data to compute per-option ratios
 
 
 def get_db():
@@ -121,52 +128,104 @@ def get_top_combos(asset, days=7):
     return combos
 
 
-def get_time_series(asset, strike, expiry, option_type):
-    """Get historical IV time series for a specific option."""
+def get_all_iv_snapshots(asset):
+    """Get ALL IV snapshots for an asset, used to build the asset-level series."""
     conn = get_db()
     cur = conn.cursor()
     cur.execute("""
-        SELECT timestamp, mid_iv FROM iv_snapshots
-        WHERE asset = %s AND strike = %s AND expiry = %s
-              AND mid_iv IS NOT NULL
+        SELECT timestamp, strike, expiry, mid_iv FROM iv_snapshots
+        WHERE asset = %s AND mid_iv IS NOT NULL
         ORDER BY timestamp ASC
-    """, (asset, strike, expiry))
+    """, (asset,))
     rows = cur.fetchall()
     conn.close()
     return rows
 
 
-def resample_hourly(rows):
+def build_asset_level_series(all_rows):
     """
-    Resample irregular time series to hourly intervals.
-    Uses forward-fill for gaps, required by TimesFM.
+    Build a dense asset-level IV series by computing the median IV
+    across all active options at each hourly interval.
+
+    Returns (hourly_timestamps, hourly_median_ivs).
     """
-    if not rows:
+    if not all_rows:
         return [], []
 
-    timestamps = [r['timestamp'] for r in rows]
-    values = [r['mid_iv'] for r in rows]
+    # Bucket all data points into hourly bins
+    buckets = {}
+    for r in all_rows:
+        ts = r['timestamp']
+        hour_key = ts.replace(minute=0, second=0, microsecond=0)
+        if hour_key not in buckets:
+            buckets[hour_key] = []
+        buckets[hour_key].append(r['mid_iv'])
 
-    # Create hourly grid from first to last timestamp
-    start = timestamps[0].replace(minute=0, second=0, microsecond=0)
-    end = timestamps[-1].replace(minute=0, second=0, microsecond=0)
+    if not buckets:
+        return [], []
+
+    # Build continuous hourly grid with median IV per hour
+    sorted_hours = sorted(buckets.keys())
+    start = sorted_hours[0]
+    end = sorted_hours[-1]
+
     hourly_ts = []
     hourly_vals = []
-
     current = start
-    src_idx = 0
-    last_val = values[0]
+    last_median = statistics.median(buckets[start])
 
     while current <= end:
-        # Advance source index to closest point at or before current
-        while src_idx < len(timestamps) - 1 and timestamps[src_idx + 1] <= current:
-            src_idx += 1
-        last_val = values[src_idx]
+        if current in buckets:
+            last_median = statistics.median(buckets[current])
         hourly_ts.append(current)
-        hourly_vals.append(last_val)
+        hourly_vals.append(last_median)
         current += timedelta(hours=1)
 
     return hourly_ts, hourly_vals
+
+
+def compute_option_ratios(all_rows, asset_ts, asset_vals, combos, lookback_hours=RATIO_LOOKBACK_HOURS):
+    """
+    For each combo (strike-expiry), compute its characteristic ratio
+    relative to the asset-level IV using recent data.
+
+    ratio = median(option_iv / asset_iv) over the last `lookback_hours` hours.
+
+    Returns dict: {(strike, expiry): ratio}
+    """
+    if not asset_ts or not asset_vals:
+        return {}
+
+    # Build a lookup from hour -> asset-level IV
+    asset_by_hour = {}
+    for ts, val in zip(asset_ts, asset_vals):
+        asset_by_hour[ts] = val
+
+    cutoff = asset_ts[-1] - timedelta(hours=lookback_hours)
+
+    # Group recent option data by (strike, expiry)
+    combo_set = {(c['strike'], c['expiry']) for c in combos}
+    option_ratios_raw = {key: [] for key in combo_set}
+
+    for r in all_rows:
+        key = (r['strike'], r['expiry'])
+        if key not in combo_set:
+            continue
+        if r['timestamp'] < cutoff:
+            continue
+        hour_key = r['timestamp'].replace(minute=0, second=0, microsecond=0)
+        asset_iv = asset_by_hour.get(hour_key)
+        if asset_iv and asset_iv > 0:
+            option_ratios_raw[key].append(r['mid_iv'] / asset_iv)
+
+    # Compute median ratio for each combo
+    ratios = {}
+    for key, vals in option_ratios_raw.items():
+        if vals:
+            ratios[key] = statistics.median(vals)
+        else:
+            ratios[key] = 1.0  # fallback: assume ratio of 1
+    return ratios
 
 
 def load_model():
@@ -246,144 +305,222 @@ def cleanup_old_forecasts():
         print(f"Cleaned up {deleted} old forecast rows.")
 
 
-def collect_series():
-    """Collect all series eligible for forecasting."""
+def collect_asset_data():
+    """
+    For each asset, build:
+      - asset-level IV series (median across all options per hour)
+      - top 10 combos with their characteristic IV ratios
+    Returns list of per-asset dicts.
+    """
     assets = get_assets()
     if not assets:
         print("No assets found in iv_snapshots.")
-        return [], []
+        return []
 
     print(f"Assets to forecast: {assets}")
-
-    batch_series = []
-    batch_meta = []
     now = datetime.utcnow()
+    result = []
 
     for asset in assets:
+        all_rows = get_all_iv_snapshots(asset)
+        if not all_rows:
+            print(f"  {asset}: no data")
+            continue
+
+        # Build asset-level series
+        asset_ts, asset_vals = build_asset_level_series(all_rows)
+        if len(asset_vals) < MIN_HISTORY_POINTS:
+            print(f"  {asset}: only {len(asset_vals)} hourly points for asset-level series, skipping")
+            continue
+
+        print(f"  {asset}: {len(all_rows)} total snapshots -> {len(asset_vals)}h asset-level series")
+
+        # Get top combos and filter by DTE
         combos = get_top_combos(asset)
-        print(f"  {asset}: {len(combos)} combos")
-
+        valid_combos = []
         for combo in combos:
-            strike = combo['strike']
-            expiry = combo['expiry']
-            option_type = combo['option_type']
-
-            # Skip options expiring within MIN_DTE_DAYS
             try:
-                expiry_dt = parse_expiry(expiry)
+                expiry_dt = parse_expiry(combo['expiry'])
                 dte = (expiry_dt - now).total_seconds() / 86400
                 if dte < MIN_DTE_DAYS:
-                    print(f"    Skipping {strike}-{expiry} (DTE={dte:.0f}d)")
+                    print(f"    Skipping {combo['strike']}-{combo['expiry']} (DTE={dte:.0f}d)")
                     continue
             except Exception:
                 continue
+            valid_combos.append(combo)
 
-            rows = get_time_series(asset, strike, expiry, option_type)
-            hourly_ts, hourly_vals = resample_hourly(rows)
+        if not valid_combos:
+            print(f"  {asset}: no valid combos after DTE filter")
+            continue
 
-            if len(hourly_vals) < MIN_HISTORY_POINTS:
-                print(f"    Skipping {strike}-{expiry} (only {len(hourly_vals)} hourly points)")
-                continue
+        # Compute per-option ratios
+        ratios = compute_option_ratios(all_rows, asset_ts, asset_vals, valid_combos)
 
-            batch_series.append(hourly_vals)
-            batch_meta.append({
-                'asset': asset,
-                'strike': strike,
-                'expiry': expiry,
-                'option_type': option_type,
-                'last_ts': hourly_ts[-1],
-            })
+        print(f"  {asset}: {len(valid_combos)} combos, ratios: " +
+              ", ".join(f"{c['strike']}-{c['expiry']}={ratios.get((c['strike'], c['expiry']), 1.0):.3f}"
+                        for c in valid_combos))
 
-    return batch_series, batch_meta
+        result.append({
+            'asset': asset,
+            'asset_ts': asset_ts,
+            'asset_vals': asset_vals,
+            'combos': valid_combos,
+            'ratios': ratios,
+        })
+
+    return result
 
 
 def run_forecasts():
-    """Main forecast pipeline using TimesFM."""
+    """Main forecast pipeline using TimesFM with asset-level forecasting."""
     import numpy as np
 
     init_forecast_table()
-    batch_series, batch_meta = collect_series()
+    asset_data = collect_asset_data()
 
-    if not batch_series:
-        print("No series to forecast.")
+    if not asset_data:
+        print("No assets to forecast.")
         return
 
-    print(f"\nForecasting {len(batch_series)} series with horizon={HORIZON}...")
-
-    # Load model and run inference
+    # Load model once
     tfm = load_model()
 
-    forecast_input = [np.array(s) for s in batch_series]
-    freq_input = [0] * len(forecast_input)  # 0 = hourly in TimesFM
+    for ad in asset_data:
+        asset = ad['asset']
+        asset_vals = ad['asset_vals']
+        asset_ts = ad['asset_ts']
+        combos = ad['combos']
+        ratios = ad['ratios']
 
-    point_forecasts, quantile_forecasts = tfm.forecast(
-        forecast_input,
-        freq=freq_input,
-        quantiles=[0.1, 0.9],
-    )
+        print(f"\n--- {asset}: forecasting asset-level series ({len(asset_vals)}h) ---")
 
-    # Extract quantile arrays
-    quantile_lo = []
-    quantile_hi = []
-    for i in range(len(batch_meta)):
+        # Forecast the single asset-level series
+        forecast_input = [np.array(asset_vals)]
+        freq_input = [0]  # 0 = hourly in TimesFM
+
+        point_forecasts, quantile_forecasts = tfm.forecast(
+            forecast_input,
+            freq=freq_input,
+            quantiles=[0.1, 0.9],
+        )
+
+        asset_pf = point_forecasts[0]  # shape: (HORIZON,)
         if quantile_forecasts is not None:
-            quantile_lo.append(quantile_forecasts[i][:, 0])
-            quantile_hi.append(quantile_forecasts[i][:, 1])
+            asset_q10 = quantile_forecasts[0][:, 0]
+            asset_q90 = quantile_forecasts[0][:, 1]
         else:
-            quantile_lo.append([None] * HORIZON)
-            quantile_hi.append([None] * HORIZON)
+            asset_q10 = [None] * HORIZON
+            asset_q90 = [None] * HORIZON
 
-    store_forecasts(batch_meta, point_forecasts, quantile_lo, quantile_hi, MODEL_VERSION)
+        # Distribute to individual options via ratios
+        last_ts = asset_ts[-1]
+        batch_meta = []
+        option_pf = []
+        option_q10 = []
+        option_q90 = []
+
+        for combo in combos:
+            key = (combo['strike'], combo['expiry'])
+            ratio = ratios.get(key, 1.0)
+
+            pf = [max(0.0, float(asset_pf[h]) * ratio) for h in range(HORIZON)]
+            q10 = [max(0.0, float(asset_q10[h]) * ratio) if asset_q10[h] is not None else None
+                   for h in range(HORIZON)]
+            q90 = [max(0.0, float(asset_q90[h]) * ratio) if asset_q90[h] is not None else None
+                   for h in range(HORIZON)]
+
+            batch_meta.append({
+                'asset': asset,
+                'strike': combo['strike'],
+                'expiry': combo['expiry'],
+                'option_type': combo['option_type'],
+                'last_ts': last_ts,
+            })
+            option_pf.append(pf)
+            option_q10.append(q10)
+            option_q90.append(q90)
+
+            print(f"    {combo['strike']}-{combo['expiry']}: ratio={ratio:.3f}, "
+                  f"last_asset_iv={asset_vals[-1]:.1f}, last_option_iv={asset_vals[-1]*ratio:.1f}")
+
+        store_forecasts(batch_meta, option_pf, option_q10, option_q90, MODEL_VERSION)
+
     cleanup_old_forecasts()
-    print("Done.")
+    print("\nDone.")
 
 
 def seed_test_forecasts():
     """
-    Generate mock forecasts from historical data for frontend testing.
-    No TimesFM needed — uses simple random walk projection.
+    Generate mock forecasts using the asset-level approach for frontend testing.
+    No TimesFM needed — uses simple random walk on asset-level series.
     """
     init_forecast_table()
-    batch_series, batch_meta = collect_series()
+    asset_data = collect_asset_data()
 
-    if not batch_series:
-        print("No series to generate test forecasts from.")
+    if not asset_data:
+        print("No assets to generate test forecasts from.")
         return
 
-    print(f"\nGenerating mock forecasts for {len(batch_series)} series...")
+    for ad in asset_data:
+        asset = ad['asset']
+        asset_vals = ad['asset_vals']
+        asset_ts = ad['asset_ts']
+        combos = ad['combos']
+        ratios = ad['ratios']
 
-    point_forecasts = []
-    quantile_lo = []
-    quantile_hi = []
+        print(f"\n--- {asset}: generating mock asset-level forecast ---")
 
-    for series in batch_series:
-        last_val = series[-1]
-        # Simple mean-reverting random walk
-        mean_val = sum(series[-24:]) / min(24, len(series))
+        last_val = asset_vals[-1]
+        mean_val = sum(asset_vals[-24:]) / min(24, len(asset_vals))
         revert_speed = 0.002
-        volatility = max(0.5, last_val * 0.01)  # 1% of current value
+        volatility = max(0.5, last_val * 0.01)
 
-        forecast = []
-        q10 = []
-        q90 = []
+        # Generate asset-level forecast with random walk
+        asset_forecast = []
+        asset_q10 = []
+        asset_q90 = []
         current = last_val
 
+        random.seed(42)
         for h in range(HORIZON):
-            # Mean revert with noise
             drift = revert_speed * (mean_val - current)
             current = max(0.1, current + drift + random.gauss(0, volatility * 0.3))
-            forecast.append(current)
-            # Widen confidence band over time
+            asset_forecast.append(current)
             spread = volatility * (1 + h / HORIZON * 2)
-            q10.append(max(0.1, current - spread))
-            q90.append(current + spread)
+            asset_q10.append(max(0.1, current - spread))
+            asset_q90.append(current + spread)
 
-        point_forecasts.append(forecast)
-        quantile_lo.append(q10)
-        quantile_hi.append(q90)
+        # Distribute to individual options via ratios
+        last_ts = asset_ts[-1]
+        batch_meta = []
+        option_pf = []
+        option_q10_list = []
+        option_q90_list = []
 
-    store_forecasts(batch_meta, point_forecasts, quantile_lo, quantile_hi, 'mock-test')
-    print("Test forecasts seeded. Toggle 'Show 7d Forecast' on the dashboard.")
+        for combo in combos:
+            key = (combo['strike'], combo['expiry'])
+            ratio = ratios.get(key, 1.0)
+
+            pf = [max(0.1, asset_forecast[h] * ratio) for h in range(HORIZON)]
+            q10 = [max(0.1, asset_q10[h] * ratio) for h in range(HORIZON)]
+            q90 = [asset_q90[h] * ratio for h in range(HORIZON)]
+
+            batch_meta.append({
+                'asset': asset,
+                'strike': combo['strike'],
+                'expiry': combo['expiry'],
+                'option_type': combo['option_type'],
+                'last_ts': last_ts,
+            })
+            option_pf.append(pf)
+            option_q10_list.append(q10)
+            option_q90_list.append(q90)
+
+            print(f"    {combo['strike']}-{combo['expiry']}: ratio={ratio:.3f}")
+
+        store_forecasts(batch_meta, option_pf, option_q10_list, option_q90_list, 'mock-test')
+
+    print("\nTest forecasts seeded. Toggle 'Show 7d Forecast' on the dashboard.")
 
 
 if __name__ == '__main__':
