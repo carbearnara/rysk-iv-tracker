@@ -337,24 +337,28 @@ DASHBOARD_HTML = '''
                         const color = ds.borderColor;
                         const isPut = (fc.option_type || '').toLowerCase() === 'put';
                         const strike = fc.points[0] ? parseFloat(fc.points[0].strike) : 0;
-                        const fcPoints = fc.points.map(f => {
-                            let val = f.forecast_mid_iv;
+                        const fcPoints = fc.points.filter(f => {
+                            // Exclude forecast points past the option's expiry
                             const dte = f.expiry ? calcDTE(f.expiry, f.forecast_timestamp) : 0;
-                            if (useSvt && dte > 0) {
+                            return dte > 0;
+                        }).map(f => {
+                            let val = f.forecast_mid_iv;
+                            const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                            if (useSvt) {
                                 val = calcSigmaRootT(f.forecast_mid_iv, dte);
-                            } else if (useApr && spot && dte > 0) {
+                            } else if (useApr && spot) {
                                 val = calcAprFromIV(f.forecast_mid_iv, strike, spot, dte, isPut);
                             }
                             let q10 = f.quantile_10, q90 = f.quantile_90;
-                            if (useSvt && dte > 0) {
+                            if (useSvt) {
                                 q10 = q10 != null ? calcSigmaRootT(q10, dte) : null;
                                 q90 = q90 != null ? calcSigmaRootT(q90, dte) : null;
-                            } else if (useApr && spot && dte > 0) {
+                            } else if (useApr && spot) {
                                 q10 = q10 != null ? calcAprFromIV(q10, strike, spot, dte, isPut) : null;
                                 q90 = q90 != null ? calcAprFromIV(q90, strike, spot, dte, isPut) : null;
                             }
                             return { x: new Date(f.forecast_timestamp), y: val, q10, q90 };
-                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
+                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y) && p.y > 0);
                         if (!fcPoints.length) return;
                         ivChart.data.datasets.push({
                             label: `${ds.label} forecast`,
@@ -721,24 +725,28 @@ DASHBOARD_HTML = '''
                         const isPut = (fc.option_type || '').toLowerCase() === 'put';
                         const strike = fc.points[0] ? parseFloat(fc.points[0].strike) : 0;
                         // Transform forecast values based on display mode
-                        const fcPoints = fc.points.map(f => {
-                            let val = f.forecast_mid_iv;
+                        // Filter out forecast points past the option's expiry
+                        const fcPoints = fc.points.filter(f => {
                             const dte = f.expiry ? calcDTE(f.expiry, f.forecast_timestamp) : 0;
-                            if (useSvt && dte > 0) {
+                            return dte > 0;
+                        }).map(f => {
+                            let val = f.forecast_mid_iv;
+                            const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                            if (useSvt) {
                                 val = calcSigmaRootT(f.forecast_mid_iv, dte);
-                            } else if (useApr && spot && dte > 0) {
+                            } else if (useApr && spot) {
                                 val = calcAprFromIV(f.forecast_mid_iv, strike, spot, dte, isPut);
                             }
                             let q10 = f.quantile_10, q90 = f.quantile_90;
-                            if (useSvt && dte > 0) {
+                            if (useSvt) {
                                 q10 = q10 != null ? calcSigmaRootT(q10, dte) : null;
                                 q90 = q90 != null ? calcSigmaRootT(q90, dte) : null;
-                            } else if (useApr && spot && dte > 0) {
+                            } else if (useApr && spot) {
                                 q10 = q10 != null ? calcAprFromIV(q10, strike, spot, dte, isPut) : null;
                                 q90 = q90 != null ? calcAprFromIV(q90, strike, spot, dte, isPut) : null;
                             }
                             return { x: new Date(f.forecast_timestamp), y: val, q10, q90 };
-                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
+                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y) && p.y > 0);
                         if (!fcPoints.length) return;
                         // Bridge: prepend last historical point
                         const bridgedData = [{ x: bridgeTime, y: bridgeVal }, ...fcPoints];
