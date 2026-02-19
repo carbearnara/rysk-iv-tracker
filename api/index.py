@@ -274,8 +274,7 @@ DASHBOARD_HTML = '''
 
         function toggleForecast() {
             showForecast = document.getElementById('show-forecast-toggle').checked;
-            forecastCache = {};  // clear cache so fresh data is fetched
-            refresh();
+            updateForecastOverlay();
         }
 
         async function fetchForecastData(asset) {
@@ -287,6 +286,79 @@ DASHBOARD_HTML = '''
                 forecastCache[asset] = data;
                 return data;
             } catch (e) { console.log('Failed to fetch forecasts:', e); return []; }
+        }
+
+        async function updateForecastOverlay() {
+            if (!ivChart) return;
+            const asset = document.getElementById('asset-select').value;
+            const useSvt = displayMode === 'svt';
+
+            // Remove existing forecast datasets
+            ivChart.data.datasets = ivChart.data.datasets.filter(ds => !ds._isForecast && !ds._isForecastBand);
+
+            if (showForecast) {
+                const fcData = await fetchForecastData(asset);
+                if (fcData.length > 0) {
+                    const fcGroups = {};
+                    fcData.forEach(f => {
+                        const k = `${f.strike}-${f.expiry}`;
+                        if (!fcGroups[k]) fcGroups[k] = { points: [], option_type: f.option_type };
+                        fcGroups[k].points.push(f);
+                    });
+                    // Match against existing historical datasets on the y axis
+                    const histDatasets = ivChart.data.datasets.filter(ds =>
+                        ds.yAxisID === 'y' && !ds.label.startsWith('Other markets') && !ds.label.includes('Spot Price')
+                    );
+                    histDatasets.forEach(ds => {
+                        const fc = fcGroups[ds.label];
+                        if (!fc || !ds.data.length) return;
+                        const sorted = [...ds.data].sort((a, b) => a.x - b.x);
+                        const bridge = sorted[sorted.length - 1];
+                        const color = ds.borderColor;
+                        const fcPoints = fc.points.map(f => {
+                            let val = f.forecast_mid_iv;
+                            if (useSvt && f.expiry) {
+                                const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                                val = calcSigmaRootT(f.forecast_mid_iv, dte);
+                            }
+                            return { x: new Date(f.forecast_timestamp), y: val, q10: f.quantile_10, q90: f.quantile_90 };
+                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
+                        if (!fcPoints.length) return;
+                        ivChart.data.datasets.push({
+                            label: `${ds.label} forecast`,
+                            data: [{ x: bridge.x, y: bridge.y }, ...fcPoints],
+                            borderColor: color, backgroundColor: 'transparent',
+                            borderWidth: 2, borderDash: [6, 4], pointRadius: 0, pointHoverRadius: 3,
+                            tension: 0.1, yAxisID: 'y', _isForecast: true,
+                        });
+                        const bandUpper = [{ x: bridge.x, y: bridge.y }];
+                        const bandLower = [{ x: bridge.x, y: bridge.y }];
+                        fcPoints.forEach(p => {
+                            let q10 = p.q10, q90 = p.q90;
+                            if (q10 != null && q90 != null) {
+                                if (useSvt && fc.points[0] && fc.points[0].expiry) {
+                                    const dte = calcDTE(fc.points[0].expiry, p.x.toISOString());
+                                    q10 = calcSigmaRootT(q10, dte); q90 = calcSigmaRootT(q90, dte);
+                                }
+                                bandUpper.push({ x: p.x, y: q90 }); bandLower.push({ x: p.x, y: q10 });
+                            }
+                        });
+                        if (bandUpper.length > 1) {
+                            ivChart.data.datasets.push({
+                                label: `${ds.label} q90`, data: bandUpper,
+                                borderColor: 'transparent', backgroundColor: color + '20',
+                                borderWidth: 0, pointRadius: 0, fill: false, tension: 0.1, yAxisID: 'y', _isForecastBand: true,
+                            });
+                            ivChart.data.datasets.push({
+                                label: `${ds.label} q10`, data: bandLower,
+                                borderColor: 'transparent', backgroundColor: color + '20',
+                                borderWidth: 0, pointRadius: 0, fill: '-1', tension: 0.1, yAxisID: 'y', _isForecastBand: true,
+                            });
+                        }
+                    });
+                }
+            }
+            ivChart.update();
         }
 
         async function fetchHistoricalSpot(asset, days) {
