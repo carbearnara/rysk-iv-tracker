@@ -1,0 +1,43 @@
+name: Run IV Forecasts
+
+on:
+  schedule:
+    # Every 6 hours
+    - cron: '0 */6 * * *'
+  workflow_dispatch: # Manual trigger
+
+jobs:
+  forecast:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-forecast-${{ hashFiles('requirements-forecast.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-forecast-
+
+      - name: Cache HuggingFace model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-timesfm-2.0-200m
+
+      - name: Install dependencies
+        run: pip install -r requirements-forecast.txt
+
+      - name: Run forecasts
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: python forecast_runner.py

@@ -221,10 +221,16 @@ DASHBOARD_HTML = '''
         <div class="card" style="margin-bottom: 20px;">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
                 <h2 style="margin: 0;"><span id="iv-chart-title">IV Over Time</span><span id="chart-info-icon" class="info-icon" style="display:none;">i<span class="info-tooltip" id="chart-info-tooltip"></span></span></h2>
-                <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
-                    <input type="checkbox" id="show-spot-toggle" onchange="toggleSpotOverlay()" style="cursor: pointer;">
-                    Show Spot Price
-                </label>
+                <div style="display: flex; gap: 16px; align-items: center;">
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
+                        <input type="checkbox" id="show-spot-toggle" onchange="toggleSpotOverlay()" style="cursor: pointer;">
+                        Show Spot Price
+                    </label>
+                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
+                        <input type="checkbox" id="show-forecast-toggle" onchange="toggleForecast()" style="cursor: pointer;">
+                        Show 7d Forecast
+                    </label>
+                </div>
             </div>
             <div class="chart-container-large"><canvas id="iv-chart"></canvas></div>
         </div>
@@ -254,7 +260,9 @@ DASHBOARD_HTML = '''
         let ivChart = null, strikeChart = null;
         let displayMode = 'iv'; // 'iv', 'apr', or 'svt'
         let showSpotOverlay = false;
+        let showForecast = false;
         let historicalSpotData = {};
+        let forecastCache = {};
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
         const coveredCallOnly = ['PUMP', 'PURR', 'XRP']; // Assets with only covered calls (no puts)
         let spotPrices = {};
@@ -262,6 +270,23 @@ DASHBOARD_HTML = '''
         function toggleSpotOverlay() {
             showSpotOverlay = document.getElementById('show-spot-toggle').checked;
             refresh();
+        }
+
+        function toggleForecast() {
+            showForecast = document.getElementById('show-forecast-toggle').checked;
+            forecastCache = {};  // clear cache so fresh data is fetched
+            refresh();
+        }
+
+        async function fetchForecastData(asset) {
+            if (forecastCache[asset]) return forecastCache[asset];
+            try {
+                const resp = await fetch(`/api/forecasts/${asset}`);
+                const data = await resp.json();
+                if (!data.length) console.log(`No forecast data for ${asset}. Run: python forecast_runner.py --seed-test`);
+                forecastCache[asset] = data;
+                return data;
+            } catch (e) { console.log('Failed to fetch forecasts:', e); return []; }
         }
 
         async function fetchHistoricalSpot(asset, days) {
@@ -547,10 +572,103 @@ DASHBOARD_HTML = '''
                     scales.y1 = { position: 'right', title: { display: true, text: 'Spot Price ($)', color: '#f0883e' }, grid: { drawOnChartArea: false }, ticks: { color: '#f0883e' } };
                 }
             }
+            // Add forecast overlay if enabled
+            if (showForecast) {
+                const fcData = await fetchForecastData(asset);
+                if (fcData.length > 0) {
+                    // Group forecasts by strike-expiry
+                    const fcGroups = {};
+                    fcData.forEach(f => {
+                        const k = `${f.strike}-${f.expiry}`;
+                        if (!fcGroups[k]) fcGroups[k] = { points: [], option_type: f.option_type };
+                        fcGroups[k].points.push(f);
+                    });
+                    // For each top-10 historical line, add matching forecast
+                    top10.forEach(({k, pts}, i) => {
+                        const fc = fcGroups[k];
+                        if (!fc) return;
+                        // Get last historical point as bridge
+                        const lastHistPt = pts.sort((a,b) => new Date(a.timestamp) - new Date(b.timestamp));
+                        const bridge = lastHistPt[lastHistPt.length - 1];
+                        const bridgeVal = bridge.displayValue;
+                        const bridgeTime = new Date(bridge.timestamp);
+                        // Transform forecast values based on display mode
+                        const fcPoints = fc.points.map(f => {
+                            let val = f.forecast_mid_iv;
+                            if (useSvt && f.expiry) {
+                                const dte = calcDTE(f.expiry, f.forecast_timestamp);
+                                val = calcSigmaRootT(f.forecast_mid_iv, dte);
+                            }
+                            // In APR mode, fall back to showing predicted IV
+                            return { x: new Date(f.forecast_timestamp), y: val, q10: f.quantile_10, q90: f.quantile_90 };
+                        }).filter(p => p.y != null && !isNaN(p.y) && isFinite(p.y));
+                        if (!fcPoints.length) return;
+                        // Bridge: prepend last historical point
+                        const bridgedData = [{ x: bridgeTime, y: bridgeVal }, ...fcPoints];
+                        // Dashed forecast line
+                        datasets.push({
+                            label: `${k} forecast`,
+                            data: bridgedData,
+                            borderColor: colors[i],
+                            backgroundColor: 'transparent',
+                            borderWidth: 2,
+                            borderDash: [6, 4],
+                            pointRadius: 0,
+                            pointHoverRadius: 3,
+                            tension: 0.1,
+                            yAxisID: 'y',
+                            _isForecast: true,
+                        });
+                        // Confidence band (10th-90th quantile fill)
+                        const bandUpper = [{ x: bridgeTime, y: bridgeVal }];
+                        const bandLower = [{ x: bridgeTime, y: bridgeVal }];
+                        fcPoints.forEach(p => {
+                            let q10 = p.q10, q90 = p.q90;
+                            if (q10 != null && q90 != null) {
+                                if (useSvt && fc.points[0] && fc.points[0].expiry) {
+                                    const dte = calcDTE(fc.points[0].expiry, p.x.toISOString());
+                                    q10 = calcSigmaRootT(q10, dte);
+                                    q90 = calcSigmaRootT(q90, dte);
+                                }
+                                bandUpper.push({ x: p.x, y: q90 });
+                                bandLower.push({ x: p.x, y: q10 });
+                            }
+                        });
+                        if (bandUpper.length > 1) {
+                            // Upper bound (invisible line, serves as fill target)
+                            datasets.push({
+                                label: `${k} q90`,
+                                data: bandUpper,
+                                borderColor: 'transparent',
+                                backgroundColor: colors[i] + '20',
+                                borderWidth: 0,
+                                pointRadius: 0,
+                                fill: false,
+                                tension: 0.1,
+                                yAxisID: 'y',
+                                _isForecastBand: true,
+                            });
+                            // Lower bound with fill to previous dataset (upper)
+                            datasets.push({
+                                label: `${k} q10`,
+                                data: bandLower,
+                                borderColor: 'transparent',
+                                backgroundColor: colors[i] + '20',
+                                borderWidth: 0,
+                                pointRadius: 0,
+                                fill: '-1',
+                                tension: 0.1,
+                                yAxisID: 'y',
+                                _isForecastBand: true,
+                            });
+                        }
+                    });
+                }
+            }
             // Set yAxisID for all other datasets
             datasets.forEach(ds => { if (!ds.yAxisID) ds.yAxisID = 'y'; });
             if (ivChart) ivChart.destroy();
-            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25 } } } } });
+            ivChart = new Chart(ctx1, { type: 'line', data: { datasets }, options: { responsive: true, maintainAspectRatio: false, interaction: { mode: 'nearest', intersect: false }, scales, plugins: { legend: { position: 'bottom', labels: { color: '#8b949e', usePointStyle: true, pointStyle: 'line', font: { size: 11 }, padding: 10, boxWidth: 25, filter: function(item, chart) { const ds = chart.datasets[item.datasetIndex]; return !ds._isForecastBand; } } } } } });
 
             const ctx2 = document.getElementById('strike-chart').getContext('2d');
             const strikeData = {};
@@ -1046,6 +1164,24 @@ def init_db():
         )
     """)
     cursor.execute("CREATE INDEX IF NOT EXISTS idx_asset_time ON iv_snapshots(asset, timestamp)")
+    # Also ensure iv_forecasts table exists (populated by forecast_runner.py)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS iv_forecasts (
+            id SERIAL PRIMARY KEY,
+            generated_at TIMESTAMP NOT NULL,
+            asset TEXT NOT NULL,
+            strike REAL NOT NULL,
+            expiry TEXT NOT NULL,
+            option_type TEXT,
+            forecast_timestamp TIMESTAMP NOT NULL,
+            forecast_mid_iv REAL NOT NULL,
+            quantile_10 REAL,
+            quantile_90 REAL,
+            model_version TEXT DEFAULT 'timesfm-2.5-200m'
+        )
+    """)
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_forecasts_asset_gen ON iv_forecasts(asset, generated_at)")
+    cursor.execute("CREATE INDEX IF NOT EXISTS idx_forecasts_lookup ON iv_forecasts(asset, strike, expiry, generated_at DESC)")
     conn.commit()
     conn.close()
 
@@ -1709,6 +1845,36 @@ def api_iv(asset):
             WHERE asset = %s AND timestamp > %s
             ORDER BY timestamp ASC
         """, (asset, since))
+        rows = cursor.fetchall()
+        conn.close()
+        return jsonify([dict(r) for r in rows])
+    except Exception as e:
+        return jsonify([])
+
+
+@app.route('/api/forecasts/<asset>')
+def api_forecasts(asset):
+    """Get latest precomputed IV forecasts for an asset."""
+    try:
+        conn = get_db()
+        cursor = conn.cursor()
+        # Get the most recent generated_at for this asset
+        cursor.execute("""
+            SELECT generated_at FROM iv_forecasts
+            WHERE asset = %s ORDER BY generated_at DESC LIMIT 1
+        """, (asset,))
+        row = cursor.fetchone()
+        if not row:
+            conn.close()
+            return jsonify([])
+        latest_gen = row['generated_at']
+        cursor.execute("""
+            SELECT strike, expiry, option_type, forecast_timestamp,
+                   forecast_mid_iv, quantile_10, quantile_90
+            FROM iv_forecasts
+            WHERE asset = %s AND generated_at = %s
+            ORDER BY strike, expiry, forecast_timestamp
+        """, (asset, latest_gen))
         rows = cursor.fetchall()
         conn.close()
         return jsonify([dict(r) for r in rows])
