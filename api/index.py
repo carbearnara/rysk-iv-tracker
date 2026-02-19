@@ -10,7 +10,7 @@ import json
 import re
 import time
 from datetime import datetime, timedelta
-from flask import Flask, jsonify, request, render_template_string
+from flask import Flask, jsonify, request, render_template_string, make_response
 import requests
 
 # Database connection
@@ -18,6 +18,24 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 
 app = Flask(__name__)
+
+
+def cached_json(data, max_age=60, stale_revalidate=300, cdn_max_age=None):
+    """Return a JSON response with Cache-Control headers to reduce Fast Origin Transfer."""
+    resp = make_response(jsonify(data))
+    resp.headers['Cache-Control'] = f'public, max-age={max_age}, stale-while-revalidate={stale_revalidate}'
+    cdn = cdn_max_age or max_age * 2
+    resp.headers['Vercel-CDN-Cache-Control'] = f'public, max-age={cdn}, stale-while-revalidate={stale_revalidate}'
+    return resp
+
+
+def cached_html(html_str, max_age=300, stale_revalidate=3600):
+    """Return an HTML response with Cache-Control headers."""
+    resp = make_response(render_template_string(html_str))
+    resp.headers['Cache-Control'] = f'public, max-age={max_age}, stale-while-revalidate={stale_revalidate}'
+    resp.headers['Vercel-CDN-Cache-Control'] = f'public, max-age={max_age * 2}, stale-while-revalidate={stale_revalidate}'
+    return resp
+
 
 # Configuration
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -1809,7 +1827,7 @@ def index_activity_batch(max_blocks=None):
 @app.route('/')
 def index():
     """Serve dashboard."""
-    return render_template_string(DASHBOARD_HTML)
+    return cached_html(DASHBOARD_HTML, max_age=300, stale_revalidate=3600)
 
 
 @app.route('/api/assets')
@@ -1821,7 +1839,7 @@ def api_assets():
         cursor.execute("SELECT DISTINCT asset FROM iv_snapshots ORDER BY asset")
         assets = [row['asset'] for row in cursor.fetchall()]
         conn.close()
-        return jsonify(assets)
+        return cached_json(assets, max_age=300, stale_revalidate=3600)
     except Exception as e:
         return jsonify([])
 
@@ -1899,7 +1917,7 @@ def api_latest():
 
             results.append(row)
 
-        return jsonify(results)
+        return cached_json(results, max_age=60, stale_revalidate=300)
     except Exception as e:
         return jsonify([])
 
@@ -1919,7 +1937,7 @@ def api_iv(asset):
         """, (asset, since))
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
@@ -1949,7 +1967,7 @@ def api_forecasts(asset):
         """, (asset, latest_gen))
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=3600, stale_revalidate=7200)
     except Exception as e:
         return jsonify([])
 
@@ -1996,7 +2014,7 @@ def manual_fetch():
 @app.route('/activity')
 def activity_page():
     """Serve on-chain activity dashboard."""
-    return render_template_string(ACTIVITY_HTML)
+    return cached_html(ACTIVITY_HTML, max_age=300, stale_revalidate=3600)
 
 
 @app.route('/api/cron/index-activity')
@@ -2048,7 +2066,7 @@ def api_activity_positions():
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
@@ -2078,7 +2096,7 @@ def api_activity_volume():
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
@@ -2107,7 +2125,7 @@ def api_activity_stats():
         cursor.execute(query, params)
         row = cursor.fetchone()
         conn.close()
-        return jsonify(dict(row) if row else {})
+        return cached_json(dict(row) if row else {}, max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify({})
 
@@ -2136,7 +2154,7 @@ def api_activity_heatmap():
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
@@ -2166,7 +2184,7 @@ def api_activity_strikes():
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
@@ -2207,7 +2225,7 @@ def api_activity_correlation():
         cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
-        return jsonify([dict(r) for r in rows])
+        return cached_json([dict(r) for r in rows], max_age=120, stale_revalidate=600)
     except Exception as e:
         return jsonify([])
 
