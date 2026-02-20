@@ -303,6 +303,11 @@ DASHBOARD_HTML = '''
             localStorage.setItem('experimentalFeatures', on ? '1' : '0');
             document.querySelectorAll('.experimental-feature').forEach(el => el.classList.toggle('enabled', on));
             document.querySelectorAll('.experimental-link').forEach(el => el.classList.toggle('enabled', on));
+            if (!on) {
+                showForecast = false;
+                document.getElementById('show-forecast-toggle').checked = false;
+                updateForecastOverlay();
+            }
         }
         (function initExperimental() {
             const on = localStorage.getItem('experimentalFeatures') === '1';
