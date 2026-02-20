@@ -164,6 +164,13 @@ DASHBOARD_HTML = '''
         footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #30363d; text-align: center; color: #8b949e; font-size: 13px; }
         footer a { color: #58a6ff; text-decoration: none; }
         footer a:hover { text-decoration: underline; }
+        .experimental-feature { display: none !important; }
+        .experimental-feature.enabled { display: flex !important; }
+        .experimental-link { display: none !important; }
+        .experimental-link.enabled { display: inline !important; }
+        .experimental-toggle { margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: #6e7681; cursor: pointer; }
+        .experimental-toggle input { cursor: pointer; }
+        .experimental-badge { font-size: 10px; background: #da3633; color: #fff; padding: 1px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; font-weight: 500; letter-spacing: 0.3px; }
         .modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1000; justify-content: center; align-items: center; }
         .modal-overlay.active { display: flex; }
         .modal { background: #161b22; border: 1px solid #30363d; border-radius: 12px; max-width: 600px; width: 90%; max-height: 80vh; overflow-y: auto; padding: 24px; }
@@ -205,7 +212,7 @@ DASHBOARD_HTML = '''
                     <p class="subtitle">You gotta Rysk it IV the Biscuit</p>
                 </div>
                 <button class="btn-secondary" onclick="openModal()">Methodology</button>
-                <a href="/activity" style="padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; text-decoration: none; font-size: 14px;">On-Chain Activity</a>
+                <a href="/activity" class="experimental-link" style="padding: 8px 16px; border: 1px solid #30363d; border-radius: 6px; background: #21262d; color: #c9d1d9; text-decoration: none; font-size: 14px;">On-Chain Activity<span class="experimental-badge">Experimental</span></a>
             </div>
             <div class="controls">
                 <div class="control-group">
@@ -244,9 +251,9 @@ DASHBOARD_HTML = '''
                         <input type="checkbox" id="show-spot-toggle" onchange="toggleSpotOverlay()" style="cursor: pointer;">
                         Show Spot Price
                     </label>
-                    <label style="display: flex; align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
+                    <label class="experimental-feature" style="align-items: center; gap: 6px; font-size: 13px; color: #8b949e; cursor: pointer;">
                         <input type="checkbox" id="show-forecast-toggle" onchange="toggleForecast()" style="cursor: pointer;">
-                        Show 7d Forecast
+                        Show 7d Forecast<span class="experimental-badge">Experimental</span>
                     </label>
                 </div>
             </div>
@@ -272,7 +279,13 @@ DASHBOARD_HTML = '''
                 <div id="table-container"><div class="loading">Loading...</div></div>
             </div>
         </div>
-        <footer>Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.</footer>
+        <footer>
+            Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.
+            <label class="experimental-toggle">
+                <input type="checkbox" id="experimental-toggle" onchange="toggleExperimental()">
+                Enable experimental features
+            </label>
+        </footer>
     </div>
     <script>
         let ivChart = null, strikeChart = null;
@@ -284,6 +297,21 @@ DASHBOARD_HTML = '''
         const coinGeckoIds = { BTC: 'bitcoin', ETH: 'ethereum', SOL: 'solana', XRP: 'ripple', ZEC: 'zcash', HYPE: 'hyperliquid', PURR: 'purr-2', PUMP: 'pump' };
         const coveredCallOnly = ['PUMP', 'PURR', 'XRP']; // Assets with only covered calls (no puts)
         let spotPrices = {};
+
+        function toggleExperimental() {
+            const on = document.getElementById('experimental-toggle').checked;
+            localStorage.setItem('experimentalFeatures', on ? '1' : '0');
+            document.querySelectorAll('.experimental-feature').forEach(el => el.classList.toggle('enabled', on));
+            document.querySelectorAll('.experimental-link').forEach(el => el.classList.toggle('enabled', on));
+        }
+        (function initExperimental() {
+            const on = localStorage.getItem('experimentalFeatures') === '1';
+            document.getElementById('experimental-toggle').checked = on;
+            if (on) {
+                document.querySelectorAll('.experimental-feature').forEach(el => el.classList.add('enabled'));
+                document.querySelectorAll('.experimental-link').forEach(el => el.classList.add('enabled'));
+            }
+        })();
 
         function toggleSpotOverlay() {
             showSpotOverlay = document.getElementById('show-spot-toggle').checked;
@@ -939,6 +967,9 @@ ACTIVITY_HTML = '''
         footer { margin-top: 40px; padding-top: 20px; border-top: 1px solid #30363d; text-align: center; color: #8b949e; font-size: 13px; }
         footer a { color: #58a6ff; text-decoration: none; }
         footer a:hover { text-decoration: underline; }
+        .experimental-badge { font-size: 10px; background: #da3633; color: #fff; padding: 1px 6px; border-radius: 10px; margin-left: 6px; vertical-align: middle; font-weight: 500; letter-spacing: 0.3px; }
+        .experimental-toggle { margin-top: 8px; display: flex; align-items: center; justify-content: center; gap: 6px; font-size: 12px; color: #6e7681; cursor: pointer; }
+        .experimental-toggle input { cursor: pointer; }
         .heatmap { display: grid; grid-template-columns: 50px repeat(24, 1fr); gap: 2px; }
         .heatmap-cell { aspect-ratio: 1; border-radius: 3px; display: flex; align-items: center; justify-content: center; font-size: 10px; cursor: default; min-height: 24px; }
         .heatmap-label { font-size: 11px; color: #8b949e; display: flex; align-items: center; justify-content: center; }
@@ -964,7 +995,7 @@ ACTIVITY_HTML = '''
     <div class="container">
         <header>
             <div>
-                <h1>On-Chain Activity</h1>
+                <h1>On-Chain Activity<span class="experimental-badge">Experimental</span></h1>
                 <p class="subtitle">RyskHype Position Tracker</p>
             </div>
             <div class="controls">
@@ -1015,9 +1046,20 @@ ACTIVITY_HTML = '''
             <h2>Recent Positions</h2>
             <div id="positions-table"><div class="loading">Loading...</div></div>
         </div>
-        <footer>Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.</footer>
+        <footer>
+            Made with love by <a href="https://x.com/0xcarnation" target="_blank">0xcarnation</a>. Powered by Claude.
+            <label class="experimental-toggle">
+                <input type="checkbox" id="experimental-toggle" onchange="toggleExperimental()" checked>
+                Enable experimental features
+            </label>
+        </footer>
     </div>
     <script>
+        function toggleExperimental() {
+            const on = document.getElementById('experimental-toggle').checked;
+            localStorage.setItem('experimentalFeatures', on ? '1' : '0');
+            if (!on) window.location.href = '/';
+        }
         let volumeChart = null, premiumChart = null, strikesChart = null, correlationChart = null;
         const assetColors = {'BTC': '#f7931a', 'HYPE': '#58a6ff', 'ETH': '#627eea', 'SOL': '#00ffa3', 'XRP': '#23292f', 'HYPE': '#a371f7'};
 
