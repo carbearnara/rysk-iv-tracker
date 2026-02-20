@@ -71,17 +71,36 @@ forecast_runner.py    — Standalone TimesFM forecast script (GitHub Actions)
 
 ### `.github/workflows/forecast.yml`
 - Runs daily at 06:00 UTC + manual dispatch
+- Manual dispatch has mode input: `seed-test` (default) or `full`
+  - `seed-test`: only installs psycopg2 + python-dotenv, generates mock random-walk forecasts
+  - `full`: installs timesfm + torch, runs real TimesFM inference (needs `HF_TOKEN` secret for gated model)
+- Scheduled runs attempt `full` mode
 - Caches pip packages and HuggingFace model (~400MB)
 - Python 3.11, ubuntu-latest, 30min timeout
-- Uses `DATABASE_URL` from GitHub repository secrets
+- Uses `DATABASE_URL` and `HF_TOKEN` from GitHub repository secrets
 
 ## Recent Changes (This Session)
+1. `f4eaf86` — Hid Forecast and On-Chain Activity behind experimental features toggle
+   - Both features hidden by default, revealed by footer checkbox
+   - "Experimental" red badge on both features when visible
+   - Preference persisted in localStorage
+   - Activity page: unchecking experimental redirects to main dashboard
+2. `e1551a7` — Updated forecast workflow with seed-test mode and HF_TOKEN support
+   - Manual dispatch defaults to `seed-test` (no ML model needed)
+   - Scheduled runs attempt full TimesFM forecasts
+   - Ran `seed-test` successfully: BTC, ETH, PUMP, SOL, XRP now have forecast data
+   - HYPE, PURR, ZEC skipped (no valid combos >7 DTE)
+3. `dd8381c` — Clear forecast overlay when experimental features are disabled
+   - Toggling off experimental also unchecks forecast, removes chart overlays
+
+## Previous Session Changes
 1. `20365b9` — Refactored forecast_runner.py to asset-level approach with ratio distribution
 2. `3742bf7` — Added Cache-Control + Vercel-CDN-Cache-Control headers to all routes
 3. `5f76917` — Added forecast support for APR mode (BS forward pricing) and σ√T mode
 4. `7a6f22d` — Fixed forecast lines extending past option expiry (clipped at dte > 0)
 
 ## Known Design Decisions
+- **Experimental features** — Forecast and On-Chain Activity are behind a footer toggle, hidden by default, persisted in localStorage. Disabling experimental also clears active forecast overlays from charts.
 - **Forecast mid_iv only** — σ√T and APR are derived on the frontend from mid_iv
 - **APR forecast is approximate** — uses current spot price (spot will change in reality)
 - **Top 10 combos per asset** — matches the chart's existing selection logic
@@ -89,9 +108,10 @@ forecast_runner.py    — Standalone TimesFM forecast script (GitHub Actions)
 - **Non-negative clamping** — forecast values floored at 0 (IV can't be negative)
 - **Embedded HTML/JS** — required by Vercel serverless (no static file serving from Flask)
 - **Separate requirements files** — `api/requirements.txt` for Vercel, `requirements-forecast.txt` for forecast script (TimesFM+PyTorch too large for Vercel's 250MB limit)
+- **Forecast seed-test mode** — generates mock random-walk forecasts for all assets with valid combos (>7 DTE); currently BTC, ETH, PUMP, SOL, XRP have data
 
 ## Potential Future Work
-- Run actual TimesFM forecasts via GitHub Actions (currently only seeded test data in DB)
+- Run actual TimesFM forecasts via GitHub Actions (needs `HF_TOKEN` GitHub secret for gated HuggingFace model `google/timesfm-2.0-200m-pytorch`)
 - Extract CSS/JS from embedded HTML to separate cached files (further bandwidth reduction)
 - Pre-compute percentile calculations for `/api/latest` to reduce payload size
 - Consider lighter charting alternatives to Chart.js CDN loads
