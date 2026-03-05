@@ -1072,7 +1072,7 @@ ACTIVITY_HTML = '''
             document.getElementById('asset-filter').onchange = refresh;
             document.getElementById('days-select').onchange = refresh;
             await refresh();
-            setInterval(refresh, 5 * 60 * 1000);
+            setInterval(refresh, 15 * 60 * 1000);
         }
 
         async function refresh() {
@@ -1923,7 +1923,7 @@ def index_activity_batch(max_blocks=None):
 @app.route('/')
 def index():
     """Serve dashboard."""
-    return cached_html(DASHBOARD_HTML, max_age=300, stale_revalidate=3600)
+    return cached_html(DASHBOARD_HTML, max_age=1800, stale_revalidate=7200)
 
 
 @app.route('/api/assets')
@@ -1948,72 +1948,66 @@ def api_latest():
         conn = get_db()
         cursor = conn.cursor()
 
-        # Get latest values
-        query = """
-            SELECT DISTINCT ON (asset, strike, expiry) *
-            FROM iv_snapshots
-            WHERE 1=1
-        """
-        params = []
-        if asset:
-            query += " AND asset = %s"
-            params.append(asset)
-        query += " ORDER BY asset, strike, expiry, timestamp DESC"
-        cursor.execute(query, params)
-        rows = cursor.fetchall()
+        asset_clause = "AND asset = %(asset)s" if asset else ""
+        params = {'asset': asset} if asset else {}
 
-        # Get historical IV for percentile calculation (last 7 days)
-        since = datetime.utcnow() - timedelta(days=7)
-        cursor.execute("""
-            SELECT asset, strike, expiry, mid_iv
-            FROM iv_snapshots
-            WHERE mid_iv IS NOT NULL AND timestamp > %s
-        """, (since,))
-        history = cursor.fetchall()
+        # Single query: latest values + percentile stats from 7-day history via SQL
+        cursor.execute(f"""
+            WITH latest AS (
+                SELECT DISTINCT ON (asset, strike, expiry) *
+                FROM iv_snapshots
+                WHERE 1=1 {asset_clause}
+                ORDER BY asset, strike, expiry, timestamp DESC
+            ),
+            hist_stats AS (
+                SELECT asset, strike, expiry,
+                       COUNT(*) as cnt,
+                       ROUND(MIN(mid_iv)::numeric, 2) as iv_min,
+                       ROUND(MAX(mid_iv)::numeric, 2) as iv_max
+                FROM iv_snapshots
+                WHERE timestamp > NOW() - INTERVAL '7 days'
+                  AND mid_iv IS NOT NULL {asset_clause}
+                GROUP BY asset, strike, expiry
+            ),
+            hist_below AS (
+                SELECT h.asset, h.strike, h.expiry,
+                       COUNT(*) as cnt_below
+                FROM iv_snapshots h
+                JOIN latest l USING (asset, strike, expiry)
+                WHERE h.timestamp > NOW() - INTERVAL '7 days'
+                  AND h.mid_iv IS NOT NULL
+                  AND h.mid_iv < l.mid_iv
+                GROUP BY h.asset, h.strike, h.expiry
+            )
+            SELECT l.*,
+                   CASE WHEN s.cnt >= 3 AND l.mid_iv IS NOT NULL
+                        THEN ROUND(COALESCE(b.cnt_below, 0)::numeric / s.cnt * 100, 1)
+                   END as iv_percentile,
+                   CASE WHEN s.cnt >= 3 AND l.mid_iv IS NOT NULL THEN s.iv_min END as iv_min,
+                   CASE WHEN s.cnt >= 3 AND l.mid_iv IS NOT NULL THEN s.iv_max END as iv_max
+            FROM latest l
+            LEFT JOIN hist_stats s USING (asset, strike, expiry)
+            LEFT JOIN hist_below b USING (asset, strike, expiry)
+        """, params)
+        rows = cursor.fetchall()
         conn.close()
 
-        # Build historical IV lookup: {(asset, strike, expiry): [iv1, iv2, ...]}
-        iv_history = {}
-        for h in history:
-            key = (h['asset'], h['strike'], h['expiry'])
-            if key not in iv_history:
-                iv_history[key] = []
-            iv_history[key].append(h['mid_iv'])
-
-        # Add percentile and pricing indicator to each row
         results = []
         for r in rows:
             row = dict(r)
-            key = (r['asset'], r['strike'], r['expiry'])
-            hist = iv_history.get(key, [])
-
-            if r['mid_iv'] and len(hist) >= 3:
-                # Calculate percentile
-                sorted_hist = sorted(hist)
-                current_iv = r['mid_iv']
-                below = sum(1 for iv in sorted_hist if iv < current_iv)
-                percentile = (below / len(sorted_hist)) * 100
-
-                row['iv_percentile'] = round(percentile, 1)
-                row['iv_min'] = round(min(hist), 2)
-                row['iv_max'] = round(max(hist), 2)
-
-                # Pricing indicator
-                if percentile >= 75:
+            pct = row.get('iv_percentile')
+            if pct is not None:
+                if pct >= 75:
                     row['pricing'] = 'EXPENSIVE'
-                elif percentile <= 25:
+                elif pct <= 25:
                     row['pricing'] = 'CHEAP'
                 else:
                     row['pricing'] = 'FAIR'
             else:
-                row['iv_percentile'] = None
                 row['pricing'] = None
-                row['iv_min'] = None
-                row['iv_max'] = None
-
             results.append(row)
 
-        return cached_json(results, max_age=60, stale_revalidate=300)
+        return cached_json(results, max_age=600, stale_revalidate=900)
     except Exception as e:
         return jsonify([])
 
@@ -2110,7 +2104,7 @@ def manual_fetch():
 @app.route('/activity')
 def activity_page():
     """Serve on-chain activity dashboard."""
-    return cached_html(ACTIVITY_HTML, max_age=300, stale_revalidate=3600)
+    return cached_html(ACTIVITY_HTML, max_age=1800, stale_revalidate=7200)
 
 
 @app.route('/api/cron/index-activity')
